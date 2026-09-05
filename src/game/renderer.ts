@@ -61,7 +61,9 @@ export class Renderer {
         const px = x * TILE
         const py = y * TILE
         const base = BIOME_COLORS[biome]
-        ctx.fillStyle = shade(base, (x + y) % 2 === 0 ? 6 : -4)
+        const vitality = biome === 'grass' ? world.vegetationAt(x, y) : 50
+        const terrainShade = (x + y) % 2 === 0 ? 6 : -4
+        ctx.fillStyle = shade(base, terrainShade + (biome === 'grass' ? Math.round((vitality - 50) / 4) : 0))
         ctx.fillRect(px, py, TILE + 0.5, TILE + 0.5)
 
         if (biome === 'forest') {
@@ -71,6 +73,14 @@ export class Renderer {
           ctx.lineTo(px + 10, py + 9)
           ctx.lineTo(px + 2, py + 9)
           ctx.fill()
+        } else if (biome === 'grass' && vitality > 68 && (x * 5 + y * 11 + world.tick) % 9 === 0) {
+          ctx.strokeStyle = 'rgba(214, 246, 150, 0.28)'
+          ctx.lineWidth = 0.7
+          ctx.beginPath()
+          ctx.moveTo(px + 4, py + 9)
+          ctx.lineTo(px + 5, py + 4)
+          ctx.lineTo(px + 7, py + 9)
+          ctx.stroke()
         } else if (biome === 'mountain') {
           ctx.fillStyle = shade(base, 28)
           ctx.beginPath()

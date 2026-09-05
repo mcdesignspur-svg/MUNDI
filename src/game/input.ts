@@ -25,6 +25,7 @@ export class InputController {
   private lastX = 0
   private lastY = 0
   private spaceDown = false
+  private pinchActive = false
   private pointers = new Map<number, { x: number; y: number }>()
   private pinchStartDist = 0
   private pinchStartZoom = 1
@@ -91,6 +92,7 @@ export class InputController {
     this.pinchStartZoom = this.camera.zoom
     this.dragging = false
     this.panning = true
+    this.pinchActive = true
     this.lastX = (pts[0]!.x + pts[1]!.x) / 2
     this.lastY = (pts[0]!.y + pts[1]!.y) / 2
   }
@@ -109,6 +111,14 @@ export class InputController {
       this.canvas.style.cursor = 'grabbing'
       return
     }
+
+    // Wait to paint on touch devices until the gesture is clearly a tap or a drag.
+    // This prevents a stray biome mark when a player starts a two-finger pan or pinch.
+    if (e.pointerType === 'touch') {
+      this.dragging = false
+      return
+    }
+
     this.dragging = true
     const t = this.tile(e)
     this.hover = t
@@ -141,6 +151,16 @@ export class InputController {
       this.lastY = e.clientY
       return
     }
+
+    if (e.pointerType === 'touch' && !this.dragging) {
+      const moved = Math.hypot(e.clientX - this.lastX, e.clientY - this.lastY) > 8
+      if (moved) {
+        this.dragging = true
+        this.apply(this.hover.x, this.hover.y)
+        return
+      }
+    }
+
     if (
       this.dragging &&
       (this.state.tool.startsWith('paint-') ||
@@ -152,6 +172,12 @@ export class InputController {
   }
 
   private onPointerUp = (e: PointerEvent): void => {
+    const wasTouchTap =
+      e.pointerType === 'touch' &&
+      !this.panning &&
+      !this.dragging &&
+      !this.pinchActive &&
+      this.pointers.size === 1
     this.pointers.delete(e.pointerId)
     if (this.pointers.size >= 2) {
       this.beginPinch()
@@ -162,13 +188,20 @@ export class InputController {
       const rect = this.canvas.getBoundingClientRect()
       this.lastX = p.x + rect.left
       this.lastY = p.y + rect.top
-      this.panning = this.state.tool === 'pan' || this.spaceDown
-      this.dragging = !this.panning
+      // After a pinch, the remaining finger keeps panning instead of painting.
+      this.panning = this.pinchActive || this.state.tool === 'pan' || this.spaceDown
+      this.dragging = false
       this.pinchStartDist = 0
       return
     }
+    if (wasTouchTap) {
+      const t = this.tile(e)
+      this.hover = t
+      this.apply(t.x, t.y)
+    }
     this.dragging = false
     this.panning = false
+    this.pinchActive = false
     this.pinchStartDist = 0
     this.canvas.style.cursor = this.state.tool === 'pan' ? 'grab' : 'crosshair'
   }

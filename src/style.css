@@ -93,6 +93,9 @@ body {
   right: calc(12px + var(--safe-right));
   z-index: 5;
   max-width: min(56vw, 320px);
+  display: grid;
+  justify-items: end;
+  gap: 7px;
   animation: rise 0.7s ease-out 0.08s both;
 }
 
@@ -114,6 +117,24 @@ body {
   font-weight: 600;
 }
 
+.map-action {
+  appearance: none;
+  min-height: 38px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: rgba(14, 26, 34, 0.82);
+  color: var(--ink);
+  font: 600 0.72rem/1 var(--font-body);
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.map-action:active {
+  transform: scale(0.96);
+}
+
 .toolbar {
   position: absolute;
   left: 50%;
@@ -128,6 +149,35 @@ body {
   animation: rise 0.75s ease-out 0.12s both;
 }
 
+.mobile-tool-context {
+  display: none;
+}
+
+.feedback {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  bottom: calc(var(--toolbar-h) + 16px);
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border: 1px solid rgba(212, 163, 92, 0.35);
+  border-radius: 999px;
+  background: rgba(14, 26, 34, 0.94);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.26);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.feedback.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .mobile-tabs {
   display: none;
   gap: 6px;
@@ -139,6 +189,7 @@ body {
   flex: 1;
   min-height: 44px;
   border: 1px solid var(--panel-border);
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
   font: 600 0.75rem/1 var(--font-body);
@@ -164,6 +215,7 @@ body {
   gap: 6px;
   justify-content: center;
   padding: 10px;
+  border-radius: 16px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   backdrop-filter: blur(12px);
@@ -182,12 +234,21 @@ body {
 button.tool {
   appearance: none;
   border: 1px solid transparent;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink);
   font: 500 0.78rem/1 var(--font-body);
   min-height: 44px;
   padding: 8px 12px;
   cursor: pointer;
+}
+
+.tool-icon {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 1rem;
+  line-height: 0;
+  vertical-align: -0.08em;
 }
 
 button.tool:hover {
@@ -217,6 +278,7 @@ button.tool.nature.active {
   justify-content: center;
   align-items: center;
   padding: 8px 10px;
+  border-radius: 16px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   backdrop-filter: blur(12px);
@@ -225,6 +287,7 @@ button.tool.nature.active {
 .controls button {
   appearance: none;
   border: 1px solid var(--panel-border);
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
   color: var(--ink);
   font: 500 0.8rem/1 var(--font-body);
@@ -245,6 +308,18 @@ button.tool.nature.active {
   color: var(--muted);
   font-size: 0.8rem;
   min-height: 44px;
+}
+
+.controls label span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.controls output {
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 .controls input[type='range'] {
@@ -275,13 +350,64 @@ button.tool.nature.active {
     padding: 6px 8px;
   }
 
+  .hud {
+    top: calc(9px + var(--safe-top));
+    right: calc(9px + var(--safe-right));
+  }
+
+  .map-action {
+    min-height: 34px;
+    padding: 7px 10px;
+    font-size: 0.68rem;
+  }
+
   .stat-bar span:nth-child(n + 4) {
     display: none;
   }
 
   .toolbar {
-    gap: 6px;
-    padding: 8px 8px calc(8px + var(--safe-bottom));
+    gap: 7px;
+    width: 100%;
+    padding: 8px 8px calc(9px + var(--safe-bottom));
+    border-top: 1px solid rgba(180, 210, 200, 0.12);
+    background: linear-gradient(180deg, rgba(8, 14, 18, 0.56), rgba(8, 14, 18, 0.96) 22%);
+    backdrop-filter: blur(16px);
+  }
+
+  .mobile-tool-context {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 43px;
+    padding: 7px 10px;
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.035);
+  }
+
+  .tool-context-icon {
+    display: grid;
+    flex: 0 0 31px;
+    width: 31px;
+    height: 31px;
+    place-items: center;
+    border-radius: 10px;
+    background: rgba(212, 163, 92, 0.15);
+    font-size: 1rem;
+  }
+
+  .mobile-tool-context strong {
+    display: block;
+    color: var(--ink);
+    font-size: 0.78rem;
+    line-height: 1.1;
+  }
+
+  .mobile-tool-context p {
+    margin: 3px 0 0;
+    color: var(--muted);
+    font-size: 0.69rem;
+    line-height: 1.2;
   }
 
   .mobile-tabs {
@@ -311,12 +437,23 @@ button.tool.nature.active {
     padding: 10px 6px;
   }
 
+  .tool-icon {
+    display: block;
+    margin: 0 0 5px;
+    font-size: 1.08rem;
+  }
+
   .controls {
     width: 100%;
   }
 
   .controls label {
     flex: 1 1 40%;
+    justify-content: space-between;
+  }
+
+  .controls label span {
+    width: 100%;
     justify-content: space-between;
   }
 

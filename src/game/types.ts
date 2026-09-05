@@ -35,6 +35,8 @@ export interface Creature {
   vx: number
   vy: number
   life: number
+  energy: number
+  breedCooldown: number
   age: number
 }
 

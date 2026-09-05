@@ -15,9 +15,18 @@ app.innerHTML = `
   </header>
   <aside class="hud">
     <div class="stat-bar" id="stats">Cargando…</div>
+    <button type="button" class="map-action" id="btn-recenter">Centrar mapa</button>
   </aside>
   <p class="hint">Pellizco = zoom · Dos dedos / Mano = pan · Toca = herramienta</p>
+  <div class="feedback" id="feedback" role="status" aria-live="polite"></div>
   <div class="toolbar" id="toolbar">
+    <div class="mobile-tool-context" id="tool-context" aria-live="polite">
+      <span class="tool-context-icon" id="tool-context-icon">🌲</span>
+      <div>
+        <strong id="tool-context-name">Bosque</strong>
+        <p id="tool-context-hint">Toca o arrastra para pintar.</p>
+      </div>
+    </div>
     <div class="mobile-tabs" id="mobile-tabs" role="tablist">
       <button type="button" data-tab="biomes" class="active">Biomas</button>
       <button type="button" data-tab="life">Vida</button>
@@ -32,8 +41,8 @@ app.innerHTML = `
         <button type="button" data-tool="pan">Mano</button>
         <button type="button" id="btn-pause">Pausa</button>
         <button type="button" id="btn-new">Nuevo mundo</button>
-        <label>Pincel <input id="brush" type="range" min="0" max="5" value="1" /></label>
-        <label>Velocidad <input id="speed" type="range" min="0" max="3" step="1" value="1" /></label>
+        <label><span>Pincel <output id="brush-value">Medio</output></span><input id="brush" type="range" min="0" max="5" value="1" /></label>
+        <label><span>Velocidad <output id="speed-value">Normal</output></span><input id="speed" type="range" min="0" max="3" step="1" value="1" /></label>
       </div>
     </div>
   </div>
@@ -47,6 +56,12 @@ const chaosEl = document.querySelector<HTMLDivElement>('#chaos')!
 const toolbarEl = document.querySelector<HTMLDivElement>('#toolbar')!
 const toolPanels = document.querySelector<HTMLDivElement>('#tool-panels')!
 const mobileTabs = document.querySelector<HTMLDivElement>('#mobile-tabs')!
+const toolContextIcon = document.querySelector<HTMLSpanElement>('#tool-context-icon')!
+const toolContextName = document.querySelector<HTMLElement>('#tool-context-name')!
+const toolContextHint = document.querySelector<HTMLParagraphElement>('#tool-context-hint')!
+const feedbackEl = document.querySelector<HTMLDivElement>('#feedback')!
+const brushValue = document.querySelector<HTMLOutputElement>('#brush-value')!
+const speedValue = document.querySelector<HTMLOutputElement>('#speed-value')!
 
 const biomeTools: { id: ToolId; label: string }[] = [
   { id: 'paint-deepWater', label: 'Océano' },
@@ -70,6 +85,40 @@ const chaosTools: { id: ToolId; label: string; cls?: string }[] = [
   { id: 'disaster-rain', label: 'Lluvia', cls: 'nature' },
 ]
 
+const TOOL_DETAILS: Record<ToolId, { icon: string; hint: string }> = {
+  pan: { icon: '✋', hint: 'Arrastra el mapa con un dedo.' },
+  'paint-deepWater': { icon: '🌊', hint: 'Toca o arrastra para pintar.' },
+  'paint-water': { icon: '💧', hint: 'Toca o arrastra para pintar.' },
+  'paint-sand': { icon: '🏖️', hint: 'Toca o arrastra para pintar.' },
+  'paint-grass': { icon: '🌱', hint: 'Toca o arrastra para pintar.' },
+  'paint-forest': { icon: '🌲', hint: 'Toca o arrastra para pintar.' },
+  'paint-mountain': { icon: '⛰️', hint: 'Toca o arrastra para pintar.' },
+  'paint-snow': { icon: '❄️', hint: 'Toca o arrastra para pintar.' },
+  'spawn-human': { icon: '🧑', hint: 'Toca el terreno para crear vida.' },
+  'spawn-rabbit': { icon: '🐇', hint: 'Toca el terreno para crear vida.' },
+  'spawn-wolf': { icon: '🐺', hint: 'Toca el terreno para crear vida.' },
+  'disaster-fire': { icon: '🔥', hint: 'Toca o arrastra para extender fuego.' },
+  'disaster-meteor': { icon: '☄️', hint: 'Toca un lugar para impactar.' },
+  'disaster-rain': { icon: '🌧️', hint: 'Toca o arrastra para apagar fuego.' },
+}
+
+let feedbackTimer: number | undefined
+
+function showFeedback(message: string): void {
+  feedbackEl.textContent = message
+  feedbackEl.classList.add('show')
+  if (feedbackTimer) window.clearTimeout(feedbackTimer)
+  feedbackTimer = window.setTimeout(() => feedbackEl.classList.remove('show'), 1500)
+}
+
+function brushLabel(value: number): string {
+  return ['Punto', 'Medio', 'Amplio', 'Grande', 'Enorme', 'Máximo'][value] ?? 'Medio'
+}
+
+function speedLabel(value: number): string {
+  return ['Detenido', 'Lento', 'Normal', 'Rápido'][value] ?? 'Normal'
+}
+
 function mountTools(
   root: HTMLElement,
   tools: { id: ToolId; label: string; cls?: string }[],
@@ -79,7 +128,8 @@ function mountTools(
     btn.type = 'button'
     btn.className = `tool${t.cls ? ` ${t.cls}` : ''}`
     btn.dataset.tool = t.id
-    btn.textContent = t.label
+    btn.setAttribute('aria-label', t.label)
+    btn.innerHTML = `<span class="tool-icon" aria-hidden="true">${TOOL_DETAILS[t.id].icon}</span><span>${t.label}</span>`
     root.appendChild(btn)
   }
 }
@@ -116,6 +166,13 @@ function setActiveTool(tool: ToolId): void {
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tool === tool)
   })
+  const label =
+    document.querySelector<HTMLButtonElement>(`[data-tool="${tool}"]`)?.querySelector('span:last-child')
+      ?.textContent ?? tool
+  const detail = TOOL_DETAILS[tool]
+  toolContextIcon.textContent = detail.icon
+  toolContextName.textContent = label
+  toolContextHint.textContent = detail.hint
   canvas.style.cursor = tool === 'pan' ? 'grab' : 'crosshair'
 }
 
@@ -126,19 +183,28 @@ document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
 document.querySelector('#btn-pause')!.addEventListener('click', () => {
   state.paused = !state.paused
   document.querySelector('#btn-pause')!.textContent = state.paused ? 'Reanudar' : 'Pausa'
+  showFeedback(state.paused ? 'El mundo está en pausa' : 'El mundo sigue su curso')
 })
 
 document.querySelector('#btn-new')!.addEventListener('click', () => {
   world.generate(Math.floor(Math.random() * 1e9))
   updateStats()
+  showFeedback('Nuevo mundo creado')
+})
+
+document.querySelector('#btn-recenter')!.addEventListener('click', () => {
+  camera.centerOn((WORLD_W * TILE) / 2, (WORLD_H * TILE) / 2)
+  showFeedback('Vista centrada')
 })
 
 document.querySelector<HTMLInputElement>('#brush')!.addEventListener('input', (e) => {
   state.brush = Number((e.target as HTMLInputElement).value)
+  brushValue.textContent = brushLabel(state.brush)
 })
 
 document.querySelector<HTMLInputElement>('#speed')!.addEventListener('input', (e) => {
   state.speed = Number((e.target as HTMLInputElement).value)
+  speedValue.textContent = speedLabel(state.speed)
 })
 
 setActiveTool('paint-forest')
@@ -176,8 +242,10 @@ resize()
 
 function updateStats(): void {
   const { human, rabbit, wolf } = world.population
+  const vegetation = world.vegetationLevel()
   statsEl.innerHTML = `
     <span>Tick <strong>${world.tick}</strong></span>
+    <span>Verde <strong>${vegetation}%</strong></span>
     <span>Fuego <strong>${world.fires.length}</strong></span>
     <span>Humanos <strong>${human}</strong></span>
     <span>Conejos <strong>${rabbit}</strong></span>

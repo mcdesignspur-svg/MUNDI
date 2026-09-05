@@ -32,6 +32,7 @@ function randomDir(): { vx: number; vy: number } {
 export function simulate(world: World, dt: number): void {
   world.tick++
   stepFires(world)
+  if (world.tick % 12 === 0) world.regrowNature()
   stepCreatures(world, dt)
   for (const m of world.meteors) m.age += dt
   world.meteors = world.meteors.filter((m) => m.age < 0.9)
@@ -87,9 +88,19 @@ function stepCreatures(world: World, dt: number): void {
     rabbit: 2.4,
     wolf: 2.0,
   }
+  const metabolism: Record<Creature['kind'], number> = {
+    human: 1.1,
+    rabbit: 1.45,
+    wolf: 1.9,
+  }
+  const births: { kind: Creature['kind']; x: number; y: number }[] = []
 
   for (const c of world.creatures) {
     c.age += dt
+    c.breedCooldown = Math.max(0, c.breedCooldown - dt)
+    c.energy -= metabolism[c.kind] * dt
+    if (c.energy <= 0) c.life -= 4 * dt
+
     if (c.age % 1.2 < dt || (c.vx === 0 && c.vy === 0)) {
       const dir = randomDir()
       c.vx = dir.vx
@@ -111,10 +122,15 @@ function stepCreatures(world: World, dt: number): void {
           const len = Math.hypot(dx, dy) || 1
           c.vx = dx / len
           c.vy = dy / len
-          if (bestD < 0.6) {
-            best.life = 0
-            c.life = Math.min(50, c.life + 5)
-          }
+        }
+      } else if (c.kind === 'rabbit' || c.kind === 'human') {
+        const food = world.nearestFood(c.x, c.y, c.kind === 'rabbit' ? 7 : 5)
+        if (food && c.energy < 92) {
+          const dx = food.x + 0.5 - c.x
+          const dy = food.y + 0.5 - c.y
+          const len = Math.hypot(dx, dy) || 1
+          c.vx = dx / len
+          c.vy = dy / len
         }
       }
     }
@@ -131,7 +147,43 @@ function stepCreatures(world: World, dt: number): void {
     }
     c.x = Math.min(world.width - 0.1, Math.max(0.1, c.x))
     c.y = Math.min(world.height - 0.1, Math.max(0.1, c.y))
+
+    const tx = Math.floor(c.x)
+    const ty = Math.floor(c.y)
+    if (c.kind === 'rabbit' || c.kind === 'human') {
+      const eaten = world.graze(tx, ty, (c.kind === 'rabbit' ? 11 : 7) * dt)
+      c.energy = Math.min(100, c.energy + eaten * 1.8)
+    }
+
+    if (c.kind === 'wolf') {
+      const prey = world.creatures.find(
+        (other) =>
+          other.kind === 'rabbit' && other.life > 0 && (other.x - c.x) ** 2 + (other.y - c.y) ** 2 < 0.55,
+      )
+      if (prey) {
+        prey.life = 0
+        c.energy = Math.min(100, c.energy + 38)
+      }
+    }
+
+    if (
+      c.kind === 'rabbit' &&
+      c.age > 8 &&
+      c.energy > 78 &&
+      c.breedCooldown === 0 &&
+      world.creatures.length + births.length < 180
+    ) {
+      const mate = world.creatures.some(
+        (other) => other !== c && other.kind === 'rabbit' && other.energy > 58 && (other.x - c.x) ** 2 + (other.y - c.y) ** 2 < 16,
+      )
+      if (mate) {
+        births.push({ kind: 'rabbit', x: Math.floor(c.x + Math.random() * 3 - 1), y: Math.floor(c.y + Math.random() * 3 - 1) })
+        c.energy -= 20
+        c.breedCooldown = 14 + Math.random() * 8
+      }
+    }
   }
-  world.creatures = world.creatures.filter((c) => c.life > 0)
+  world.creatures = world.creatures.filter((c) => c.life > 0 && c.energy > -18)
+  for (const birth of births) world.spawn(birth.kind, birth.x, birth.y)
   world.recount()
 }

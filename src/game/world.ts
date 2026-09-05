@@ -1,4 +1,4 @@
-import type { Biome, Creature, CreatureKind, FireCell, MeteorFx } from './types'
+import { WALKABLE, type Biome, type Creature, type CreatureKind, type FireCell, type MeteorFx } from './types'
 
 export const WORLD_W = 96
 export const WORLD_H = 96
@@ -40,6 +40,7 @@ export class World {
   readonly width = WORLD_W
   readonly height = WORLD_H
   tiles: Biome[]
+  vegetation: Uint8Array
   creatures: Creature[] = []
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
@@ -49,6 +50,7 @@ export class World {
 
   constructor(seed = Date.now() % 100000) {
     this.tiles = new Array(this.width * this.height)
+    this.vegetation = new Uint8Array(this.width * this.height)
     this.generate(seed)
   }
 
@@ -92,7 +94,9 @@ export class World {
         } else {
           biome = 'grass'
         }
-        this.tiles[this.index(x, y)] = biome
+        const index = this.index(x, y)
+        this.tiles[index] = biome
+        this.vegetation[index] = biome === 'forest' ? 100 : biome === 'grass' ? 55 + ((elev * 40) | 0) : 0
       }
     }
     this.creatures = []
@@ -105,6 +109,7 @@ export class World {
 
   spawn(kind: CreatureKind, x: number, y: number): Creature | null {
     if (!this.inBounds(x, y)) return null
+    if (!WALKABLE.has(this.get(x, y))) return null
     const c: Creature = {
       id: this.nextId++,
       kind,
@@ -113,6 +118,8 @@ export class World {
       vx: 0,
       vy: 0,
       life: kind === 'wolf' ? 40 : kind === 'human' ? 50 : 20,
+      energy: kind === 'wolf' ? 78 : kind === 'human' ? 82 : 70,
+      breedCooldown: 10 + Math.random() * 9,
       age: 0,
     }
     this.creatures.push(c)
@@ -127,9 +134,80 @@ export class World {
         if (!this.inBounds(x, y)) continue
         const dx = x - cx
         const dy = y - cy
-        if (dx * dx + dy * dy <= r2) this.set(x, y, biome)
+        if (dx * dx + dy * dy <= r2) {
+          this.set(x, y, biome)
+          this.vegetation[this.index(x, y)] = biome === 'forest' ? 100 : biome === 'grass' ? 75 : 0
+        }
       }
     }
+  }
+
+  vegetationAt(x: number, y: number): number {
+    if (!this.inBounds(x, y)) return 0
+    return this.vegetation[this.index(x, y)]
+  }
+
+  graze(x: number, y: number, amount: number): number {
+    if (!this.inBounds(x, y) || this.get(x, y) !== 'grass') return 0
+    const index = this.index(x, y)
+    const eaten = Math.min(amount, this.vegetation[index]!)
+    this.vegetation[index] -= eaten
+    return eaten
+  }
+
+  nearestFood(cx: number, cy: number, radius: number): { x: number; y: number } | null {
+    const minX = Math.max(0, Math.floor(cx - radius))
+    const maxX = Math.min(this.width - 1, Math.ceil(cx + radius))
+    const minY = Math.max(0, Math.floor(cy - radius))
+    const maxY = Math.min(this.height - 1, Math.ceil(cy + radius))
+    let best: { x: number; y: number } | null = null
+    let bestDistance = Infinity
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (this.get(x, y) !== 'grass' || this.vegetationAt(x, y) < 15) continue
+        const distance = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2
+        if (distance < bestDistance) {
+          bestDistance = distance
+          best = { x, y }
+        }
+      }
+    }
+    return best
+  }
+
+  regrowNature(): void {
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        const index = this.index(x, y)
+        const biome = this.tiles[index]!
+        if (biome === 'grass') {
+          this.vegetation[index] = Math.min(100, this.vegetation[index]! + 2)
+          continue
+        }
+        if (biome !== 'sand' || Math.random() > 0.008) continue
+        const nearGrass = [
+          this.inBounds(x + 1, y) && this.get(x + 1, y) === 'grass',
+          this.inBounds(x - 1, y) && this.get(x - 1, y) === 'grass',
+          this.inBounds(x, y + 1) && this.get(x, y + 1) === 'grass',
+          this.inBounds(x, y - 1) && this.get(x, y - 1) === 'grass',
+        ].some(Boolean)
+        if (nearGrass) {
+          this.tiles[index] = 'grass'
+          this.vegetation[index] = 30
+        }
+      }
+    }
+  }
+
+  vegetationLevel(): number {
+    let total = 0
+    let count = 0
+    for (let i = 0; i < this.tiles.length; i++) {
+      if (this.tiles[i] !== 'grass') continue
+      total += this.vegetation[i]!
+      count++
+    }
+    return count === 0 ? 0 : Math.round(total / count)
   }
 
   ignite(cx: number, cy: number, radius = 1): void {
