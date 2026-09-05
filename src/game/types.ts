@@ -63,18 +63,6 @@ export const BIOME_COLORS: Record<Biome, string> = {
   lava: '#c44a1a',
 }
 
-export const BIOME_LABELS: Record<Biome, string> = {
-  deepWater: 'Océano',
-  water: 'Agua',
-  sand: 'Arena',
-  grass: 'Hierba',
-  forest: 'Bosque',
-  mountain: 'Montaña',
-  snow: 'Nieve',
-  ash: 'Ceniza',
-  lava: 'Lava',
-}
-
 export const CREATURE_COLORS: Record<CreatureKind, string> = {
   human: '#f0c070',
   rabbit: '#e8dcc8',

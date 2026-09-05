@@ -29,7 +29,12 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
 
-  draw(world: World, camera: Camera, hover: { x: number; y: number } | null, brush: number): void {
+  draw(
+    world: World,
+    camera: Camera,
+    hover: { x: number; y: number } | null,
+    brush: number,
+  ): void {
     const { ctx } = this
     const w = camera.viewW
     const h = camera.viewH
@@ -45,27 +50,19 @@ export class Renderer {
     ctx.scale(camera.zoom, camera.zoom)
     ctx.translate(-camera.x, -camera.y)
 
-    const tileScreen = TILE
-    const left = Math.max(0, Math.floor((camera.x - w / 2 / camera.zoom) / tileScreen) - 1)
-    const top = Math.max(0, Math.floor((camera.y - h / 2 / camera.zoom) / tileScreen) - 1)
-    const right = Math.min(
-      world.width,
-      Math.ceil((camera.x + w / 2 / camera.zoom) / tileScreen) + 1,
-    )
-    const bottom = Math.min(
-      world.height,
-      Math.ceil((camera.y + h / 2 / camera.zoom) / tileScreen) + 1,
-    )
+    const left = Math.max(0, Math.floor((camera.x - w / 2 / camera.zoom) / TILE) - 1)
+    const top = Math.max(0, Math.floor((camera.y - h / 2 / camera.zoom) / TILE) - 1)
+    const right = Math.min(world.width, Math.ceil((camera.x + w / 2 / camera.zoom) / TILE) + 1)
+    const bottom = Math.min(world.height, Math.ceil((camera.y + h / 2 / camera.zoom) / TILE) + 1)
 
     for (let y = top; y < bottom; y++) {
       for (let x = left; x < right; x++) {
         const biome = world.get(x, y)
-        const px = x * tileScreen
-        const py = y * tileScreen
+        const px = x * TILE
+        const py = y * TILE
         const base = BIOME_COLORS[biome]
-        const checker = (x + y) % 2 === 0 ? 6 : -4
-        ctx.fillStyle = shade(base, checker)
-        ctx.fillRect(px, py, tileScreen + 0.5, tileScreen + 0.5)
+        ctx.fillStyle = shade(base, (x + y) % 2 === 0 ? 6 : -4)
+        ctx.fillRect(px, py, TILE + 0.5, TILE + 0.5)
 
         if (biome === 'forest') {
           ctx.fillStyle = shade(base, -25)
@@ -91,8 +88,8 @@ export class Renderer {
     }
 
     for (const fire of world.fires) {
-      const px = fire.x * tileScreen
-      const py = fire.y * tileScreen
+      const px = fire.x * TILE
+      const py = fire.y * TILE
       const flicker = 0.6 + Math.sin(world.tick * 0.4 + fire.x) * 0.25
       ctx.fillStyle = `rgba(255,${(120 + fire.heat * 40) | 0},40,${flicker})`
       ctx.beginPath()
@@ -105,8 +102,8 @@ export class Renderer {
     }
 
     for (const c of world.creatures) {
-      const px = c.x * tileScreen
-      const py = c.y * tileScreen
+      const px = c.x * TILE
+      const py = c.y * TILE
       ctx.fillStyle = CREATURE_COLORS[c.kind]
       if (c.kind === 'human') {
         ctx.beginPath()
@@ -136,11 +133,11 @@ export class Renderer {
       ctx.strokeStyle = `rgba(255,180,80,${1 - t})`
       ctx.lineWidth = 2 / camera.zoom
       ctx.beginPath()
-      ctx.arc(m.x * tileScreen, m.y * tileScreen, r, 0, Math.PI * 2)
+      ctx.arc(m.x * TILE, m.y * TILE, r, 0, Math.PI * 2)
       ctx.stroke()
       ctx.fillStyle = `rgba(255,240,200,${(1 - t) * 0.35})`
       ctx.beginPath()
-      ctx.arc(m.x * tileScreen, m.y * tileScreen, r * 0.35, 0, Math.PI * 2)
+      ctx.arc(m.x * TILE, m.y * TILE, r * 0.35, 0, Math.PI * 2)
       ctx.fill()
     }
 
@@ -148,10 +145,10 @@ export class Renderer {
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'
       ctx.lineWidth = 1.2 / camera.zoom
       ctx.strokeRect(
-        (hover.x - brush) * tileScreen,
-        (hover.y - brush) * tileScreen,
-        (brush * 2 + 1) * tileScreen,
-        (brush * 2 + 1) * tileScreen,
+        (hover.x - brush) * TILE,
+        (hover.y - brush) * TILE,
+        (brush * 2 + 1) * TILE,
+        (brush * 2 + 1) * TILE,
       )
     }
 

@@ -1,4 +1,4 @@
-import type { Biome, Creature, FireCell, MeteorFx } from './types'
+import type { Biome, Creature, CreatureKind, FireCell, MeteorFx } from './types'
 
 export const WORLD_W = 96
 export const WORLD_H = 96
@@ -103,7 +103,7 @@ export class World {
     this.recount()
   }
 
-  spawn(kind: Creature['kind'], x: number, y: number): Creature | null {
+  spawn(kind: CreatureKind, x: number, y: number): Creature | null {
     if (!this.inBounds(x, y)) return null
     const c: Creature = {
       id: this.nextId++,
