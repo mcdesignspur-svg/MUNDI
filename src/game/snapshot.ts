@@ -36,6 +36,9 @@ function number(value: unknown, min: number, max: number, integer = false): numb
   if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (integer && !Number.isSafeInteger(value))) throw new Error('La partida contiene un valor fuera de rango.')
   return value
 }
+function optionalNumber(value: unknown, min: number, max: number, fallback = 0): number {
+  return value === undefined ? fallback : number(value, min, max)
+}
 function list(value: unknown, max: number, exact = false): unknown[] {
   if (!Array.isArray(value) || value.length > max || (exact && value.length !== max)) throw new Error('El tamaño de la partida no es válido.')
   return value
@@ -66,6 +69,7 @@ export function restore(input: unknown): World {
       vx: number(c.vx, -1, 1), vy: number(c.vy, -1, 1), life: number(c.life, 0, MAX_HEALTH[kind]),
       energy: number(c.energy, -100, 100), age: number(c.age, 0, 1e12),
       breedCooldown: number(c.breedCooldown, 0, 1e6), decisionIn: number(c.decisionIn, -1, 2),
+      hurt: optionalNumber(c.hurt, 0, 1), attackCooldown: optionalNumber(c.attackCooldown, 0, 2),
       activity: choice(c.activity, Object.keys(ACTIVITY_NAMES) as Creature['activity'][]),
     }
   })

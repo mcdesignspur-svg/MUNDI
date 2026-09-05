@@ -164,6 +164,13 @@ export class Renderer {
         const bob = this.reducedMotion ? 0 : moving ? Math.round(Math.sin(this.time * 12 + c.id) * 0.7) : Math.round(Math.sin(this.time * 2 + c.id) * 0.4)
         const py = c.y * TILE + bob
         ctx.fillStyle = '#12282050'; ctx.fillRect(px - 5, py - 1, 10, 3)
+        if (c.hurt > 0 && !this.reducedMotion) {
+          const intensity = Math.min(1, c.hurt / 0.42)
+          ctx.fillStyle = `rgba(255, 57, 45, ${0.25 + intensity * 0.45})`
+          ctx.beginPath()
+          ctx.arc(px, py - size * 0.55, size * (0.46 + intensity * 0.12), 0, Math.PI * 2)
+          ctx.fill()
+        }
         this.sprite(ctx, row * 4 + frame, px, py, size, c.vx < 0)
         if (state.selection?.kind === 'creature' && state.selection.id === c.id) {
           ctx.strokeStyle = '#f1cf80'; ctx.lineWidth = 1.5 / camera.zoom

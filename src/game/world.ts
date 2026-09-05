@@ -173,6 +173,8 @@ export class World {
       // Freshly created beings set off right away instead of waiting for the
       // first decision cycle, which makes a new world feel immediately alive.
       decisionIn: 0.15 + this.random.next() * 0.35,
+      hurt: 0,
+      attackCooldown: 0,
     }
     this.creatures.push(c)
     this.revision++

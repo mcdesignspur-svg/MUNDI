@@ -41,9 +41,12 @@ export interface Creature {
   age: number
   activity: Activity
   decisionIn: number
+  /** Seconds of the red impact flash still visible. */
+  hurt: number
+  attackCooldown: number
 }
 
-export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'fleeing' | 'resting'
+export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'defending' | 'fleeing' | 'resting'
 export type Selection = { kind: 'creature'; id: number } | { kind: 'tile'; x: number; y: number } | null
 export type GameCommand =
   | { type: 'apply'; tool: ToolId; x: number; y: number; radius: number }
@@ -55,7 +58,7 @@ export const MAX_AGENTS = 300
 export const MAX_HEALTH: Record<CreatureKind, number> = { human: 50, rabbit: 20, wolf: 40 }
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
-  hunting: 'Buscando una presa', fleeing: 'Huyendo del peligro', resting: 'Descansando',
+  hunting: 'Cazando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', resting: 'Descansando',
 }
 
 export interface FireCell {
