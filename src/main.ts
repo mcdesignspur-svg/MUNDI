@@ -27,11 +27,11 @@ app.innerHTML = `
         <p id="tool-context-hint">Toca o arrastra para pintar.</p>
       </div>
     </div>
-    <div class="mobile-tabs" id="mobile-tabs" role="tablist">
-      <button type="button" data-tab="biomes" class="active">Biomas</button>
-      <button type="button" data-tab="life">Vida</button>
-      <button type="button" data-tab="chaos">Caos</button>
-      <button type="button" data-tab="controls">Más</button>
+    <div class="mobile-tabs" id="mobile-tabs" role="tablist" aria-label="Herramientas del mundo">
+      <button type="button" data-tab="biomes" class="active" role="tab" aria-selected="true">Biomas</button>
+      <button type="button" data-tab="life" role="tab" aria-selected="false">Vida</button>
+      <button type="button" data-tab="chaos" role="tab" aria-selected="false">Caos</button>
+      <button type="button" data-tab="controls" role="tab" aria-selected="false">Control</button>
     </div>
     <div class="tool-panels" id="tool-panels" data-tab="biomes">
       <div class="tool-row" id="biomes"><div class="label">Biomas</div></div>
@@ -141,7 +141,11 @@ mountTools(chaosEl, chaosTools)
 mobileTabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
   btn.addEventListener('click', () => {
     toolPanels.dataset.tab = btn.dataset.tab!
-    mobileTabs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn))
+    mobileTabs.querySelectorAll('button').forEach((b) => {
+      const active = b === btn
+      b.classList.toggle('active', active)
+      b.setAttribute('aria-selected', String(active))
+    })
     syncToolbarSpace()
   })
 })
@@ -166,9 +170,8 @@ function setActiveTool(tool: ToolId): void {
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.tool === tool)
   })
-  const label =
-    document.querySelector<HTMLButtonElement>(`[data-tool="${tool}"]`)?.querySelector('span:last-child')
-      ?.textContent ?? tool
+  const button = document.querySelector<HTMLButtonElement>(`[data-tool="${tool}"]`)
+  const label = button?.querySelector('span:last-child')?.textContent ?? button?.textContent ?? tool
   const detail = TOOL_DETAILS[tool]
   toolContextIcon.textContent = detail.icon
   toolContextName.textContent = label
