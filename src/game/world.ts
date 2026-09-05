@@ -1,8 +1,11 @@
-import { WALKABLE, type Biome, type Creature, type CreatureKind, type FireCell, type MeteorFx } from './types'
+import { MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type FireCell, type MeteorFx } from './types'
+import { Random, seedNumber } from './random'
+import { SpatialIndex } from './spatial'
 
 export const WORLD_W = 96
 export const WORLD_H = 96
-export const TILE = 12
+export const TILE = 16
+export const CHUNK = 16
 
 function hash(x: number, y: number, seed: number): number {
   let n = x * 374761393 + y * 668265263 + seed * 982451653
@@ -40,17 +43,23 @@ export class World {
   readonly width = WORLD_W
   readonly height = WORLD_H
   tiles: Biome[]
-  vegetation: Uint8Array
+  vegetation: Float32Array
+  seed = ''
+  random = new Random(1)
+  spatial = new SpatialIndex()
+  revision = 0
+  terrainVersions = new Uint32Array(36)
+  rainEffects: { x: number; y: number; age: number; radius: number }[] = []
   creatures: Creature[] = []
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
-  private nextId = 1
+  nextId = 1
   tick = 0
   population = { human: 0, rabbit: 0, wolf: 0 }
 
-  constructor(seed = Date.now() % 100000) {
+  constructor(seed: string | number = 'MUNDI-ALBOR') {
     this.tiles = new Array(this.width * this.height)
-    this.vegetation = new Uint8Array(this.width * this.height)
+    this.vegetation = new Float32Array(this.width * this.height)
     this.generate(seed)
   }
 
@@ -69,9 +78,22 @@ export class World {
   set(x: number, y: number, biome: Biome): void {
     if (!this.inBounds(x, y)) return
     this.tiles[this.index(x, y)] = biome
+    this.vegetation[this.index(x, y)] = biome === 'forest' ? 100 : biome === 'grass' ? 65 : 0
+    this.touch(x, y)
   }
 
-  generate(seed: number): void {
+  touch(x: number, y: number): void {
+    this.revision++
+    // Invalidate neighbors too: coastline edges depend on adjacent tiles.
+    for (let cy = Math.max(0, Math.floor((y - 1) / CHUNK)); cy <= Math.min(5, Math.floor((y + 1) / CHUNK)); cy++) {
+      for (let cx = Math.max(0, Math.floor((x - 1) / CHUNK)); cx <= Math.min(5, Math.floor((x + 1) / CHUNK)); cx++) this.terrainVersions[cy * 6 + cx]++
+    }
+  }
+
+  generate(seedInput: string | number): void {
+    this.seed = String(seedInput)
+    const seed = seedNumber(this.seed)
+    this.random = new Random(seed)
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         const nx = x / this.width
@@ -104,10 +126,32 @@ export class World {
     this.meteors = []
     this.nextId = 1
     this.tick = 0
+    this.rainEffects = []
+    this.revision++
+    for (let i = 0; i < 36; i++) this.terrainVersions[i]++
     this.recount()
   }
 
+  populate(): void {
+    const center = { x: 48, y: 48 }
+    const grass: { x: number; y: number }[] = []
+    for (let y = 8; y < this.height - 8; y++) for (let x = 8; x < this.width - 8; x++) {
+      if (this.get(x, y) === 'grass') grass.push({ x, y })
+    }
+    grass.sort((a, b) => ((a.x - center.x) ** 2 + (a.y - center.y) ** 2) - ((b.x - center.x) ** 2 + (b.y - center.y) ** 2))
+    const candidates = grass.slice(0, Math.max(100, Math.floor(grass.length * 0.35)))
+    for (const [kind, count] of [['human', 8], ['rabbit', 28], ['wolf', 4]] as const) {
+      for (let i = 0; i < count && candidates.length; i++) {
+        const p = candidates[Math.floor(this.random.next() * candidates.length)]!
+        const c = this.spawn(kind, p.x, p.y)
+        if (c) c.age = 10 + this.random.next() * 15
+      }
+    }
+    this.spatial.rebuild(this.creatures)
+  }
+
   spawn(kind: CreatureKind, x: number, y: number): Creature | null {
+    if (this.creatures.length >= MAX_AGENTS) return null
     if (!this.inBounds(x, y)) return null
     if (!WALKABLE.has(this.get(x, y))) return null
     const c: Creature = {
@@ -117,12 +161,15 @@ export class World {
       y: y + 0.5,
       vx: 0,
       vy: 0,
-      life: kind === 'wolf' ? 40 : kind === 'human' ? 50 : 20,
+      life: MAX_HEALTH[kind],
       energy: kind === 'wolf' ? 78 : kind === 'human' ? 82 : 70,
-      breedCooldown: 10 + Math.random() * 9,
+      breedCooldown: 10 + this.random.next() * 9,
       age: 0,
+      activity: 'exploring',
+      decisionIn: this.random.next(),
     }
     this.creatures.push(c)
+    this.revision++
     this.recount()
     return c
   }
@@ -151,7 +198,12 @@ export class World {
     if (!this.inBounds(x, y) || this.get(x, y) !== 'grass') return 0
     const index = this.index(x, y)
     const eaten = Math.min(amount, this.vegetation[index]!)
+    const previous = this.vegetation[index]!
     this.vegetation[index] -= eaten
+    if (eaten > 0) {
+      this.revision++
+      if (Math.floor(previous / 20) !== Math.floor(this.vegetation[index]! / 20)) this.touch(x, y)
+    }
     return eaten
   }
 
@@ -181,10 +233,12 @@ export class World {
         const index = this.index(x, y)
         const biome = this.tiles[index]!
         if (biome === 'grass') {
-          this.vegetation[index] = Math.min(100, this.vegetation[index]! + 2)
+          const previous = this.vegetation[index]!
+          this.vegetation[index] = Math.min(100, previous + 2)
+          if (Math.floor(previous / 20) !== Math.floor(this.vegetation[index]! / 20)) this.touch(x, y)
           continue
         }
-        if (biome !== 'sand' || Math.random() > 0.008) continue
+        if (biome !== 'sand' || this.random.next() > 0.008) continue
         const nearGrass = [
           this.inBounds(x + 1, y) && this.get(x + 1, y) === 'grass',
           this.inBounds(x - 1, y) && this.get(x - 1, y) === 'grass',
@@ -194,6 +248,7 @@ export class World {
         if (nearGrass) {
           this.tiles[index] = 'grass'
           this.vegetation[index] = 30
+          this.touch(x, y)
         }
       }
     }
@@ -218,6 +273,7 @@ export class World {
         if (b === 'forest' || b === 'grass' || b === 'ash') {
           if (!this.fires.some((f) => f.x === x && f.y === y)) {
             this.fires.push({ x, y, heat: 1 })
+            this.revision++
           }
         }
       }
@@ -225,6 +281,9 @@ export class World {
   }
 
   rain(cx: number, cy: number, radius = 4): void {
+    this.rainEffects.push({ x: cx, y: cy, radius, age: 0 })
+    if (this.rainEffects.length > 12) this.rainEffects.shift()
+    this.revision++
     const r2 = radius * radius
     this.fires = this.fires.filter((f) => {
       const dx = f.x - cx
@@ -268,6 +327,7 @@ export class World {
     })
     this.ignite(cx, cy, 5)
     this.meteors.push({ x: cx + 0.5, y: cy + 0.5, age: 0, radius: 18 })
+    if (this.meteors.length > 64) this.meteors.shift()
     this.recount()
   }
 

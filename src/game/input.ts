@@ -1,229 +1,123 @@
-import type { Biome, ToolId } from './types'
 import type { Camera } from './camera'
-import { TILE, type World } from './world'
-
-export interface InputState {
-  tool: ToolId
-  brush: number
-  paused: boolean
-  speed: number
-}
-
-function paintBiome(tool: ToolId): Biome | null {
-  if (!tool.startsWith('paint-')) return null
-  return tool.slice(6) as Biome
-}
-
-function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  return Math.hypot(a.x - b.x, a.y - b.y)
-}
+import type { GameState } from './commands'
+import type { GameCommand } from './types'
+import { TILE } from './world'
 
 export class InputController {
   hover: { x: number; y: number } | null = null
-  private dragging = false
-  private panning = false
-  private lastX = 0
-  private lastY = 0
-  private spaceDown = false
-  private pinchActive = false
-  private pointers = new Map<number, { x: number; y: number }>()
-  private pinchStartDist = 0
-  private pinchStartZoom = 1
   private canvas: HTMLCanvasElement
-  private world: World
   private camera: Camera
-  private state: InputState
-  private onChange: () => void
+  private state: GameState
+  private send: (command: GameCommand) => void
+  private pointers = new Map<number, { x: number; y: number }>()
+  private panning = false
+  private gesture = false
+  private space = false
+  private last = { x: 0, y: 0 }
+  private pinchDistance = 0
+  private stroke: { x: number; y: number }[] = []
+  private strokeKeys = new Set<string>()
+  private downTool: GameState['tool'] = 'inspect'
 
-  constructor(
-    canvas: HTMLCanvasElement,
-    world: World,
-    camera: Camera,
-    state: InputState,
-    onChange: () => void,
-  ) {
-    this.canvas = canvas
-    this.world = world
-    this.camera = camera
-    this.state = state
-    this.onChange = onChange
-    canvas.addEventListener('pointerdown', this.onPointerDown)
-    canvas.addEventListener('pointermove', this.onPointerMove)
-    canvas.addEventListener('pointerup', this.onPointerUp)
-    canvas.addEventListener('pointercancel', this.onPointerUp)
-    canvas.addEventListener('pointerleave', this.onPointerLeave)
-    canvas.addEventListener('wheel', this.onWheel, { passive: false })
-    window.addEventListener('keydown', this.onKeyDown)
-    window.addEventListener('keyup', this.onKeyUp)
-  }
-
-  private local(e: PointerEvent): { x: number; y: number } {
-    const rect = this.canvas.getBoundingClientRect()
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
-  }
-
-  private tile(e: PointerEvent): { x: number; y: number } {
-    const p = this.local(e)
-    const w = this.camera.screenToWorld(p.x, p.y)
-    return { x: Math.floor(w.x / TILE), y: Math.floor(w.y / TILE) }
-  }
-
-  private apply(tx: number, ty: number): void {
-    const { tool, brush } = this.state
-    const biome = paintBiome(tool)
-    if (biome) {
-      this.world.paintBrush(tx, ty, biome, brush)
-      this.onChange()
-      return
-    }
-    if (tool === 'spawn-human') this.world.spawn('human', tx, ty)
-    else if (tool === 'spawn-rabbit') this.world.spawn('rabbit', tx, ty)
-    else if (tool === 'spawn-wolf') this.world.spawn('wolf', tx, ty)
-    else if (tool === 'disaster-fire') this.world.ignite(tx, ty, brush)
-    else if (tool === 'disaster-meteor') this.world.meteor(tx, ty)
-    else if (tool === 'disaster-rain') this.world.rain(tx, ty, Math.max(3, brush + 2))
-    this.onChange()
-  }
-
-  private beginPinch(): void {
-    const pts = [...this.pointers.values()]
-    if (pts.length < 2) return
-    this.pinchStartDist = dist(pts[0]!, pts[1]!)
-    this.pinchStartZoom = this.camera.zoom
-    this.dragging = false
-    this.panning = true
-    this.pinchActive = true
-    this.lastX = (pts[0]!.x + pts[1]!.x) / 2
-    this.lastY = (pts[0]!.y + pts[1]!.y) / 2
-  }
-
-  private onPointerDown = (e: PointerEvent): void => {
-    this.canvas.setPointerCapture(e.pointerId)
-    this.pointers.set(e.pointerId, this.local(e))
-    if (this.pointers.size >= 2) {
-      this.beginPinch()
-      return
-    }
-    this.lastX = e.clientX
-    this.lastY = e.clientY
-    if (this.state.tool === 'pan' || this.spaceDown || e.button === 1 || e.button === 2) {
-      this.panning = true
-      this.canvas.style.cursor = 'grabbing'
-      return
-    }
-
-    // Wait to paint on touch devices until the gesture is clearly a tap or a drag.
-    // This prevents a stray biome mark when a player starts a two-finger pan or pinch.
-    if (e.pointerType === 'touch') {
-      this.dragging = false
-      return
-    }
-
-    this.dragging = true
-    const t = this.tile(e)
-    this.hover = t
-    this.apply(t.x, t.y)
-  }
-
-  private onPointerMove = (e: PointerEvent): void => {
-    const local = this.local(e)
-    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, local)
-
-    if (this.pointers.size >= 2) {
-      const pts = [...this.pointers.values()]
-      const mid = { x: (pts[0]!.x + pts[1]!.x) / 2, y: (pts[0]!.y + pts[1]!.y) / 2 }
-      const d = dist(pts[0]!, pts[1]!)
-      if (this.pinchStartDist > 0) {
-        const ratio = (this.pinchStartZoom * (d / this.pinchStartDist)) / this.camera.zoom
-        this.camera.zoomAt(mid.x, mid.y, ratio)
-      }
-      this.camera.pan(mid.x - this.lastX, mid.y - this.lastY)
-      this.lastX = mid.x
-      this.lastY = mid.y
-      this.hover = null
-      return
-    }
-
-    this.hover = this.tile(e)
-    if (this.panning) {
-      this.camera.pan(e.clientX - this.lastX, e.clientY - this.lastY)
-      this.lastX = e.clientX
-      this.lastY = e.clientY
-      return
-    }
-
-    if (e.pointerType === 'touch' && !this.dragging) {
-      const moved = Math.hypot(e.clientX - this.lastX, e.clientY - this.lastY) > 8
-      if (moved) {
-        this.dragging = true
-        this.apply(this.hover.x, this.hover.y)
-        return
-      }
-    }
-
-    if (
-      this.dragging &&
-      (this.state.tool.startsWith('paint-') ||
-        this.state.tool === 'disaster-fire' ||
-        this.state.tool === 'disaster-rain')
-    ) {
-      this.apply(this.hover.x, this.hover.y)
-    }
-  }
-
-  private onPointerUp = (e: PointerEvent): void => {
-    const wasTouchTap =
-      e.pointerType === 'touch' &&
-      !this.panning &&
-      !this.dragging &&
-      !this.pinchActive &&
-      this.pointers.size === 1
-    this.pointers.delete(e.pointerId)
-    if (this.pointers.size >= 2) {
-      this.beginPinch()
-      return
-    }
-    if (this.pointers.size === 1) {
-      const p = [...this.pointers.values()][0]!
-      const rect = this.canvas.getBoundingClientRect()
-      this.lastX = p.x + rect.left
-      this.lastY = p.y + rect.top
-      // After a pinch, the remaining finger keeps panning instead of painting.
-      this.panning = this.pinchActive || this.state.tool === 'pan' || this.spaceDown
-      this.dragging = false
-      this.pinchStartDist = 0
-      return
-    }
-    if (wasTouchTap) {
-      const t = this.tile(e)
-      this.hover = t
-      this.apply(t.x, t.y)
-    }
-    this.dragging = false
-    this.panning = false
-    this.pinchActive = false
-    this.pinchStartDist = 0
-    this.canvas.style.cursor = this.state.tool === 'pan' ? 'grab' : 'crosshair'
-  }
-
-  private onPointerLeave = (): void => {
-    if (this.pointers.size === 0) this.hover = null
-  }
-
-  private onWheel = (e: WheelEvent): void => {
-    e.preventDefault()
-    const rect = this.canvas.getBoundingClientRect()
-    this.camera.zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? 0.9 : 1.1)
-  }
-
-  private onKeyDown = (e: KeyboardEvent): void => {
-    if (e.code === 'Space') {
+  constructor(canvas: HTMLCanvasElement, camera: Camera, state: GameState, send: (command: GameCommand) => void) {
+    this.canvas = canvas; this.camera = camera; this.state = state; this.send = send
+    canvas.addEventListener('pointerdown', this.down)
+    canvas.addEventListener('pointermove', this.move)
+    canvas.addEventListener('pointerup', this.up)
+    canvas.addEventListener('pointercancel', this.cancel)
+    canvas.addEventListener('lostpointercapture', e => { if (this.pointers.has(e.pointerId)) this.reset() })
+    canvas.addEventListener('pointerleave', () => { if (!this.pointers.size) this.hover = null })
+    canvas.addEventListener('contextmenu', e => e.preventDefault())
+    canvas.addEventListener('wheel', e => {
       e.preventDefault()
-      this.spaceDown = true
+      const r = canvas.getBoundingClientRect()
+      camera.zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-Math.sign(e.deltaY) * 0.12))
+    }, { passive: false })
+    window.addEventListener('keydown', e => {
+      if (e.target instanceof Element && e.target.closest('input, button, select, textarea, dialog')) return
+      if (e.code === 'Space') { e.preventDefault(); this.space = true }
+    })
+    window.addEventListener('keyup', e => { if (e.code === 'Space') this.space = false })
+    window.addEventListener('blur', () => { this.space = false; this.reset() })
+  }
+  private point(e: PointerEvent): { x: number; y: number } {
+    const r = this.canvas.getBoundingClientRect()
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
+  private tile(p: { x: number; y: number }): { x: number; y: number } {
+    const world = this.camera.screenToWorld(p.x, p.y)
+    return { x: Math.floor(world.x / TILE), y: Math.floor(world.y / TILE) }
+  }
+  private apply(p: { x: number; y: number }): void {
+    this.send({ type: 'apply', tool: this.downTool, x: p.x, y: p.y, radius: this.state.brush })
+  }
+  private continuous(): boolean {
+    return this.downTool.startsWith('paint-') || this.downTool === 'disaster-fire' || this.downTool === 'disaster-rain'
+  }
+  private remember(p: { x: number; y: number }): void {
+    const key = p.x + ',' + p.y
+    if (!this.strokeKeys.has(key) && this.stroke.length < 9216) {
+      this.strokeKeys.add(key); this.stroke.push(p)
     }
   }
-
-  private onKeyUp = (e: KeyboardEvent): void => {
-    if (e.code === 'Space') this.spaceDown = false
+  private down = (e: PointerEvent): void => {
+    e.preventDefault()
+    const p = this.point(e)
+    this.canvas.setPointerCapture(e.pointerId)
+    this.pointers.set(e.pointerId, p)
+    if (this.pointers.size >= 2) {
+      this.gesture = true; this.panning = true; this.stroke = []; this.strokeKeys.clear()
+      const [a, b] = [...this.pointers.values()]
+      this.last = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+      this.pinchDistance = Math.hypot(a.x - b.x, a.y - b.y)
+      return
+    }
+    this.last = p; this.downTool = this.state.tool
+    this.panning = this.downTool === 'pan' || this.space || e.button === 1 || e.button === 2
+    this.hover = this.tile(p)
+    if (this.panning) { this.canvas.style.cursor = 'grabbing'; return }
+    if (e.pointerType === 'touch') this.remember(this.hover)
+    else this.apply(this.hover)
+  }
+  private move = (e: PointerEvent): void => {
+    const p = this.point(e), active = this.pointers.has(e.pointerId)
+    this.hover = this.tile(p)
+    if (!active) return
+    this.pointers.set(e.pointerId, p)
+    if (this.pointers.size >= 2) {
+      const [a, b] = [...this.pointers.values()]
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+      const distance = Math.hypot(a.x - b.x, a.y - b.y)
+      if (this.pinchDistance > 0 && distance > 0) this.camera.zoomAt(mid.x, mid.y, distance / this.pinchDistance)
+      this.camera.pan(mid.x - this.last.x, mid.y - this.last.y)
+      this.last = mid; this.pinchDistance = distance; this.hover = null
+      return
+    }
+    if (this.panning || this.gesture) {
+      this.camera.pan(p.x - this.last.x, p.y - this.last.y); this.last = p; return
+    }
+    if (this.continuous()) {
+      if (e.pointerType === 'touch') this.remember(this.hover)
+      else this.apply(this.hover)
+    }
+  }
+  private up = (e: PointerEvent): void => {
+    if (!this.pointers.has(e.pointerId)) return
+    if (e.pointerType === 'touch' && !this.gesture && !this.panning) {
+      if (this.continuous()) { this.remember(this.tile(this.point(e))); for (const p of this.stroke) this.apply(p) }
+      else this.apply(this.tile(this.point(e)))
+    }
+    this.pointers.delete(e.pointerId)
+    if (this.pointers.size) { this.last = [...this.pointers.values()][0]; this.gesture = true }
+    else this.reset()
+  }
+  private cancel = (): void => { this.reset() }
+  reset(): void {
+    const ids = [...this.pointers.keys()]
+    this.pointers.clear()
+    for (const id of ids) if (this.canvas.hasPointerCapture(id)) this.canvas.releasePointerCapture(id)
+    this.stroke = []; this.strokeKeys.clear()
+    this.panning = false; this.gesture = false; this.pinchDistance = 0; this.hover = null
+    this.canvas.style.cursor = this.state.tool === 'pan' ? 'grab' : this.state.tool === 'inspect' ? 'default' : 'crosshair'
   }
 }
