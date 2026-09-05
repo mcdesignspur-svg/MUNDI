@@ -155,10 +155,14 @@ export class Renderer {
       if (c.x < left || c.x > right || c.y < top || c.y > bottom) continue
       entities.push({ y: c.y, draw: () => {
         const moving = !['eating', 'resting'].includes(c.activity)
-        const frame = this.reducedMotion || !moving ? 0 : Math.floor(c.age * (c.kind === 'rabbit' ? 7 : 5)) % 4
+        const frame = this.reducedMotion ? 0 : moving
+          ? Math.floor(this.time * (c.kind === 'rabbit' ? 9 : 6) + c.id * 0.37) % 4
+          : (Math.floor(this.time * 2 + c.id) % 5 === 0 ? 1 : 0)
         const row = c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2
         const size = c.kind === 'human' ? 25 : c.kind === 'rabbit' ? 18 : 27
-        const px = c.x * TILE, py = c.y * TILE
+        const px = c.x * TILE
+        const bob = this.reducedMotion ? 0 : moving ? Math.round(Math.sin(this.time * 12 + c.id) * 0.7) : Math.round(Math.sin(this.time * 2 + c.id) * 0.4)
+        const py = c.y * TILE + bob
         ctx.fillStyle = '#12282050'; ctx.fillRect(px - 5, py - 1, 10, 3)
         this.sprite(ctx, row * 4 + frame, px, py, size, c.vx < 0)
         if (state.selection?.kind === 'creature' && state.selection.id === c.id) {

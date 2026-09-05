@@ -1,9 +1,11 @@
 import { FLAMMABLE, MAX_AGENTS, WALKABLE, type Creature } from './types'
-import type { World } from './world'
+import { MAX_FIRES, type World } from './world'
 
 export const STEP = 1 / 20
-const SPEED = { human: 1.6, rabbit: 2.4, wolf: 2.8 }
-const METABOLISM = { human: 1.1, rabbit: 1.45, wolf: 1.4 }
+const SPEED = { human: 1.85, rabbit: 3, wolf: 3.25 }
+const METABOLISM = { human: 0.58, rabbit: 0.85, wolf: 0.95 }
+const FOOD_THRESHOLD = { human: 72, rabbit: 68, wolf: 76 }
+const RABBIT_LIMIT = 72
 
 function steer(c: Creature, x: number, y: number): void {
   const length = Math.hypot(x, y) || 1
@@ -29,7 +31,7 @@ export function simulate(world: World, dt = STEP): void {
     if (world.get(tx, ty) === 'lava') c.life -= 35 * dt
 
     if (c.decisionIn <= 0) {
-      c.decisionIn = 0.6 + world.random.next() * 0.4
+      c.decisionIn = 0.45 + world.random.next() * 0.75
       const angle = world.random.next() * Math.PI * 2
       steer(c, Math.cos(angle), Math.sin(angle))
       c.activity = 'exploring'
@@ -40,25 +42,32 @@ export function simulate(world: World, dt = STEP): void {
         steer(c, c.x - predator.x, c.y - predator.y)
       } else if (burning.has(world.index(tx, ty)) || world.get(tx, ty) === 'lava') {
         c.activity = 'fleeing'
-      } else if (c.kind === 'wolf' && c.energy < 90) {
+      } else if (c.kind === 'wolf' && c.energy < FOOD_THRESHOLD.wolf) {
         const prey = nearby.filter(o => o.kind === 'rabbit').sort((a, b) =>
           (a.x - c.x) ** 2 + (a.y - c.y) ** 2 - (b.x - c.x) ** 2 - (b.y - c.y) ** 2)[0]
         c.activity = 'hunting'
         if (prey) steer(c, prey.x - c.x, prey.y - c.y)
-      } else if (c.kind !== 'wolf' && c.energy < 90) {
+      } else if (c.kind !== 'wolf' && c.energy < FOOD_THRESHOLD[c.kind]) {
         const food = world.nearestFood(c.x, c.y, 7)
         c.activity = 'seeking-food'
         if (food) steer(c, food.x + 0.5 - c.x, food.y + 0.5 - c.y)
-      } else if (c.energy >= 90) {
+      } else if (c.energy > 94 && world.random.next() < 0.12) {
         c.activity = 'resting'
         c.vx = c.vy = 0
+        c.decisionIn = 0.45 + world.random.next() * 0.55
       }
     }
 
     if (c.kind !== 'wolf' && c.activity !== 'fleeing' && c.energy < 96) {
-      const eaten = world.graze(tx, ty, (c.kind === 'rabbit' ? 11 : 7) * dt)
-      c.energy = Math.min(100, c.energy + eaten * 1.8)
-      if (eaten > 0) c.activity = 'eating'
+      const eaten = world.graze(tx, ty, (c.kind === 'rabbit' ? 5 : 3) * dt)
+      c.energy = Math.min(100, c.energy + eaten * 1.25)
+      if (eaten > 0) {
+        c.activity = 'eating'
+        c.vx = c.vy = 0
+        // Eating is a short beat in the animation, then the next decision
+        // sends the creature on its way again.
+        c.decisionIn = Math.min(c.decisionIn, 0.3)
+      }
     }
     if (c.kind === 'wolf' && c.energy < 94) {
       const prey = world.spatial.nearby(c.x, c.y, 0.8).find(o => o.kind === 'rabbit')
@@ -77,33 +86,45 @@ export function simulate(world: World, dt = STEP): void {
       } else c.decisionIn = 0
     }
 
-    if (c.kind === 'rabbit' && c.age > 8 && c.energy > 78 && c.breedCooldown === 0 && world.creatures.length + births.length < MAX_AGENTS) {
-      const mate = world.spatial.nearby(c.x, c.y, 4).find(o => o.id !== c.id && o.kind === 'rabbit' && o.energy > 58 && o.age > 8)
-      if (mate) {
+    if (c.kind === 'rabbit' && world.population.rabbit + births.length < RABBIT_LIMIT && c.age > 14 && c.energy > 88 && c.breedCooldown === 0 && world.creatures.length + births.length < MAX_AGENTS) {
+      const nearbyRabbits = world.spatial.nearby(c.x, c.y, 7).filter(o => o.kind === 'rabbit')
+      const mate = nearbyRabbits.find(o => o.id !== c.id && o.energy > 84 && o.age > 14 && o.breedCooldown === 0)
+      if (mate && nearbyRabbits.length < 10 && world.random.next() < 0.16) {
         births.push({ x: tx, y: ty })
-        c.energy -= 20
-        c.breedCooldown = 14 + world.random.next() * 8
+        c.energy -= 16
+        mate.energy -= 10
+        // A pair shares one long cooldown, so a crowded group cannot generate
+        // a litter every decision cycle.
+        c.breedCooldown = mate.breedCooldown = 105 + world.random.next() * 45
       }
     }
   }
   world.creatures = world.creatures.filter(c => c.life > 0)
   for (const birth of births) world.spawn('rabbit', birth.x, birth.y)
-  if (world.tick % 4 === 0) {
+  // Fire spreads once per simulated second, needs vegetation as fuel, and can
+  // only choose one neighbouring tile. This keeps a blaze meaningful without
+  // letting it consume an entire island in a few seconds.
+  if (world.tick % 20 === 0) {
     const next: typeof world.fires = []
     for (const fire of world.fires) {
-      if (!FLAMMABLE.has(world.get(fire.x, fire.y))) continue
-      fire.heat += 0.08
-      if (fire.heat > 1.2 && world.get(fire.x, fire.y) !== 'ash') world.set(fire.x, fire.y, 'ash')
-      if (world.random.next() < 0.35) {
+      const biome = world.get(fire.x, fire.y)
+      if (!FLAMMABLE.has(biome)) continue
+      const fuel = world.burnFuel(fire.x, fire.y, biome === 'forest' ? 7 : 16)
+      fire.heat += 0.1
+      if (fuel <= 4) {
+        world.set(fire.x, fire.y, 'ash')
+        continue
+      }
+      const spreadChance = biome === 'forest' ? 0.12 : 0.035
+      if (world.fires.length + next.length < MAX_FIRES && fuel > 25 && world.random.next() < spreadChance) {
         const a = Math.floor(world.random.next() * 8) * Math.PI / 4
         const x = fire.x + Math.round(Math.cos(a)), y = fire.y + Math.round(Math.sin(a))
         const key = world.index(x, y)
-        if (world.inBounds(x, y) && FLAMMABLE.has(world.get(x, y)) && !burning.has(key)) {
+        if (world.inBounds(x, y) && FLAMMABLE.has(world.get(x, y)) && world.vegetationAt(x, y) > 30 && !burning.has(key)) {
           burning.add(key); next.push({ x, y, heat: 0.2 })
         }
       }
-      if (fire.heat < 2.5 && world.random.next() > 0.08) next.push(fire)
-      else world.set(fire.x, fire.y, 'ash')
+      next.push(fire)
     }
     world.fires = next
   }

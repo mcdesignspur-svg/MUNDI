@@ -1,4 +1,4 @@
-import { MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type FireCell, type MeteorFx } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type FireCell, type MeteorFx } from './types'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
 
@@ -6,6 +6,7 @@ export const WORLD_W = 96
 export const WORLD_H = 96
 export const TILE = 16
 export const CHUNK = 16
+export const MAX_FIRES = 180
 
 function hash(x: number, y: number, seed: number): number {
   let n = x * 374761393 + y * 668265263 + seed * 982451653
@@ -154,19 +155,24 @@ export class World {
     if (this.creatures.length >= MAX_AGENTS) return null
     if (!this.inBounds(x, y)) return null
     if (!WALKABLE.has(this.get(x, y))) return null
+    const heading = this.random.next() * Math.PI * 2
     const c: Creature = {
       id: this.nextId++,
       kind,
       x: x + 0.5,
       y: y + 0.5,
-      vx: 0,
-      vy: 0,
+      vx: Math.cos(heading),
+      vy: Math.sin(heading),
       life: MAX_HEALTH[kind],
       energy: kind === 'wolf' ? 78 : kind === 'human' ? 82 : 70,
-      breedCooldown: 10 + this.random.next() * 9,
+      // A starter population should settle before it starts growing. Rabbits
+      // receive a longer first cooldown; newborns are also protected by age.
+      breedCooldown: kind === 'rabbit' ? 45 + this.random.next() * 60 : 10 + this.random.next() * 9,
       age: 0,
       activity: 'exploring',
-      decisionIn: this.random.next(),
+      // Freshly created beings set off right away instead of waiting for the
+      // first decision cycle, which makes a new world feel immediately alive.
+      decisionIn: 0.15 + this.random.next() * 0.35,
     }
     this.creatures.push(c)
     this.revision++
@@ -205,6 +211,20 @@ export class World {
       if (Math.floor(previous / 20) !== Math.floor(this.vegetation[index]! / 20)) this.touch(x, y)
     }
     return eaten
+  }
+
+  /** Consume plant fuel without changing the geography until the fire is done. */
+  burnFuel(x: number, y: number, amount: number): number {
+    if (!this.inBounds(x, y) || !FLAMMABLE.has(this.get(x, y))) return 0
+    const index = this.index(x, y)
+    const previous = this.vegetation[index]!
+    const remaining = Math.max(0, previous - amount)
+    this.vegetation[index] = remaining
+    if (remaining !== previous) {
+      this.revision++
+      if (Math.floor(previous / 20) !== Math.floor(remaining / 20)) this.touch(x, y)
+    }
+    return remaining
   }
 
   nearestFood(cx: number, cy: number, radius: number): { x: number; y: number } | null {
@@ -270,8 +290,9 @@ export class World {
       for (let x = cx - radius; x <= cx + radius; x++) {
         if (!this.inBounds(x, y)) continue
         const b = this.get(x, y)
-        if (b === 'forest' || b === 'grass' || b === 'ash') {
+        if (b === 'forest' || b === 'grass') {
           if (!this.fires.some((f) => f.x === x && f.y === y)) {
+            if (this.fires.length >= MAX_FIRES) return
             this.fires.push({ x, y, heat: 1 })
             this.revision++
           }

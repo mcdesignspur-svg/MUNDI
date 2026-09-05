@@ -89,7 +89,9 @@ export const CREATURE_COLORS: Record<CreatureKind, string> = {
   wolf: '#8a8f9a',
 }
 
-export const FLAMMABLE: ReadonlySet<Biome> = new Set(['grass', 'forest', 'ash'])
+// Ash has no fuel left. Keeping it out of this set prevents a fire from hopping
+// indefinitely across land it has already consumed.
+export const FLAMMABLE: ReadonlySet<Biome> = new Set(['grass', 'forest'])
 
 export const WALKABLE: ReadonlySet<Biome> = new Set([
   'sand',
