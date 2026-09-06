@@ -10,6 +10,8 @@ export type Biome =
   | 'lava'
 
 export type CreatureKind = 'human' | 'rabbit' | 'wolf'
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
+export type Weather = 'clear' | 'rain' | 'drought'
 export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque'
 
 export interface DeathRecord {
@@ -70,6 +72,8 @@ export const MAX_AGE: Record<CreatureKind, number> = { human: 1300, rabbit: 520,
 export const DEATH_CAUSE_NAMES: Record<DeathCause, string> = {
   hambruna: 'Murió de hambre', vejez: 'Murió de vejez', fuego: 'Murió en un incendio', lava: 'Murió por la lava', ataque: 'Murió en un ataque',
 }
+export const SEASON_NAMES: Record<Season, string> = { spring: 'Primavera', summer: 'Verano', autumn: 'Otoño', winter: 'Invierno' }
+export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía' }
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
   hunting: 'Cazando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', resting: 'Descansando',

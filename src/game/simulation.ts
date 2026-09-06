@@ -177,7 +177,7 @@ export function simulate(world: World, dt = STEP): void {
     }
     world.fires = next
   }
-  if (world.tick % 20 === 0) world.regrowNature()
+  if (world.tick % 20 === 0) { world.updateClimate(); world.regrowNature() }
   if (world.tick % 90 === 0) {
     for (let i = 0; i < world.tiles.length; i++) {
       if (world.tiles[i] === 'lava' && world.random.next() < 0.15) world.set(i % world.width, Math.floor(i / world.width), 'ash')

@@ -3,7 +3,7 @@ import { Camera } from './game/camera'
 import { InputController } from './game/input'
 import { Renderer } from './game/renderer'
 import { simulate, STEP } from './game/simulation'
-import { ACTIVITY_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, type Biome, type GameCommand, type ToolId } from './game/types'
+import { ACTIVITY_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, SEASON_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type ToolId } from './game/types'
 import { World, TILE } from './game/world'
 import { dispatch, type GameState } from './game/commands'
 import { snapshot, restore } from './game/snapshot'
@@ -179,7 +179,7 @@ function focusHabitat(): void {
 function refresh(): void {
   $('world-name').textContent = world.seed
   $('world-time').textContent = worldTime(world.tick)
-  $('world-status').textContent = state.paused ? 'El mundo está en pausa' : world.fires.length ? world.fires.length + ' focos de fuego' : 'La vida sigue su curso'
+  $('world-status').textContent = state.paused ? 'El mundo está en pausa' : world.fires.length ? world.fires.length + ' focos de fuego' : SEASON_NAMES[world.season()] + ' · ' + WEATHER_NAMES[world.weather]
   for (const kind of ['human', 'rabbit', 'wolf'] as const) $('count-' + kind).textContent = String(world.population[kind])
   $('world-summary').textContent = 'Vegetación ' + world.vegetationLevel() + '% · ' + world.creatures.length + ' seres'
   $('pause-symbol').textContent = state.paused ? '▶' : 'Ⅱ'
@@ -215,9 +215,10 @@ function updateInspector(): void {
     const biome = world.get(selection.x, selection.y), food = Math.round(world.vegetationAt(selection.x, selection.y))
     const loss = world.deaths.find(d => (d.x - selection.x) ** 2 + (d.y - selection.y) ** 2 < 36)
     const lossText = loss ? `<p class="recent-loss"><strong>Última pérdida cerca de aquí</strong>${KIND_NAMES[loss.kind]} #${loss.id} · ${DEATH_CAUSE_NAMES[loss.cause]} · hace ${Math.max(0, Math.floor((world.tick - loss.tick) / 20))} min</p>` : ''
+    const moisture = Math.round(world.moistureAt(selection.x, selection.y)), fertility = Math.round(world.fertilityAt(selection.x, selection.y))
     $('inspector-content').innerHTML = `
       <h2>${BIOME_NAMES[biome]}</h2><p class="muted">Celda ${selection.x + 1}, ${selection.y + 1}</p>
-      <dl><div><dt>Vegetación</dt><dd>${food}%</dd></div><div><dt>Estado</dt><dd>${world.fires.some(f => f.x === selection.x && f.y === selection.y) ? 'En llamas' : 'En calma'}</dd></div></dl>
+      <dl><div><dt>Vegetación</dt><dd>${food}%</dd></div><div><dt>Humedad</dt><dd>${moisture}%</dd></div><div><dt>Fertilidad</dt><dd>${fertility}%</dd></div><div><dt>Estado</dt><dd>${world.fires.some(f => f.x === selection.x && f.y === selection.y) ? 'En llamas' : WEATHER_NAMES[world.weather]}</dd></div></dl>
       <p>${biome === 'grass' ? 'Los herbívoros se alimentan aquí. La pradera vuelve a crecer con el tiempo.' : biome === 'forest' ? 'Un refugio de árboles. El fuego puede convertirlo en ceniza.' : biome === 'water' || biome === 'deepWater' ? 'Los habitantes terrestres buscan un camino alrededor del agua.' : 'Pinta el terreno o aplica un poder para transformar este lugar.'}</p>${lossText}
     `
   }

@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type MeteorFx } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type MeteorFx, type Season, type Weather } from './types'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
 
@@ -45,6 +45,8 @@ export class World {
   readonly height = WORLD_H
   tiles: Biome[]
   vegetation: Float32Array
+  moisture: Float32Array
+  fertility: Float32Array
   seed = ''
   random = new Random(1)
   spatial = new SpatialIndex()
@@ -57,11 +59,15 @@ export class World {
   meteors: MeteorFx[] = []
   nextId = 1
   tick = 0
+  weather: Weather = 'clear'
+  weatherUntil = 0
   population = { human: 0, rabbit: 0, wolf: 0 }
 
   constructor(seed: string | number = 'MUNDI-ALBOR') {
     this.tiles = new Array(this.width * this.height)
     this.vegetation = new Float32Array(this.width * this.height)
+    this.moisture = new Float32Array(this.width * this.height)
+    this.fertility = new Float32Array(this.width * this.height)
     this.generate(seed)
   }
 
@@ -80,7 +86,14 @@ export class World {
   set(x: number, y: number, biome: Biome): void {
     if (!this.inBounds(x, y)) return
     this.tiles[this.index(x, y)] = biome
-    this.vegetation[this.index(x, y)] = biome === 'forest' ? 100 : biome === 'grass' ? 65 : 0
+    const index = this.index(x, y)
+    this.vegetation[index] = biome === 'forest' ? 100 : biome === 'grass' ? 65 : 0
+    if (biome === 'water' || biome === 'deepWater') this.moisture[index] = 100
+    else if (biome === 'ash' || biome === 'lava') this.fertility[index] = Math.max(8, this.fertility[index]! * 0.42)
+    else if (biome === 'grass' || biome === 'forest') {
+      this.moisture[index] = Math.max(42, this.moisture[index]!)
+      this.fertility[index] = Math.max(45, this.fertility[index]!)
+    }
     this.touch(x, y)
   }
 
@@ -121,6 +134,8 @@ export class World {
         const index = this.index(x, y)
         this.tiles[index] = biome
         this.vegetation[index] = biome === 'forest' ? 100 : biome === 'grass' ? 55 + ((elev * 40) | 0) : 0
+        this.moisture[index] = biome === 'water' || biome === 'deepWater' ? 100 : Math.round(24 + moist * 70)
+        this.fertility[index] = biome === 'grass' || biome === 'forest' ? Math.round(35 + moist * 50 + elev * 10) : Math.round(12 + moist * 22)
       }
     }
     this.creatures = []
@@ -129,6 +144,8 @@ export class World {
     this.meteors = []
     this.nextId = 1
     this.tick = 0
+    this.weather = 'clear'
+    this.weatherUntil = 0
     this.rainEffects = []
     this.revision++
     for (let i = 0; i < 36; i++) this.terrainVersions[i]++
@@ -210,6 +227,42 @@ export class World {
     return this.vegetation[this.index(x, y)]
   }
 
+  moistureAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.moisture[this.index(x, y)]! : 0
+  }
+
+  fertilityAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.fertility[this.index(x, y)]! : 0
+  }
+
+  season(): Season {
+    return (['spring', 'summer', 'autumn', 'winter'] as const)[Math.floor(this.tick / (20 * 360)) % 4]!
+  }
+
+  /** Advances a deterministic local climate once per world minute. */
+  updateClimate(): void {
+    if (this.tick >= this.weatherUntil) {
+      const season = this.season()
+      const roll = this.random.next()
+      this.weather = season === 'summer' && roll < 0.38 ? 'drought' : season === 'spring' && roll < 0.48 ? 'rain' : season === 'autumn' && roll < 0.26 ? 'rain' : 'clear'
+      const duration = this.weather === 'clear' ? 75 : this.weather === 'rain' ? 42 : 58
+      this.weatherUntil = this.tick + duration * 20
+    }
+    const season = this.season()
+    const evaporation = season === 'summer' ? 0.42 : season === 'winter' ? 0.12 : 0.25
+    const rainfall = this.weather === 'rain' ? 1.65 : 0
+    const drought = this.weather === 'drought' ? 0.72 : 0
+    for (let i = 0; i < this.tiles.length; i++) {
+      const biome = this.tiles[i]!
+      if (biome === 'water' || biome === 'deepWater') { this.moisture[i] = 100; continue }
+      this.moisture[i] = Math.max(0, Math.min(100, this.moisture[i]! + rainfall - evaporation - drought))
+      if (biome === 'grass' || biome === 'forest') {
+        const recovery = this.weather === 'rain' ? 0.09 : this.weather === 'drought' ? -0.045 : 0.018
+        this.fertility[i] = Math.max(4, Math.min(100, this.fertility[i]! + recovery))
+      } else if (biome === 'ash') this.fertility[i] = Math.min(72, this.fertility[i]! + (this.moisture[i]! > 45 ? 0.1 : 0))
+    }
+  }
+
   graze(x: number, y: number, amount: number): number {
     if (!this.inBounds(x, y) || this.get(x, y) !== 'grass') return 0
     const index = this.index(x, y)
@@ -258,14 +311,24 @@ export class World {
   }
 
   regrowNature(): void {
+    const seasonGrowth = this.season() === 'spring' ? 1.25 : this.season() === 'summer' ? 0.9 : this.season() === 'autumn' ? 0.72 : 0.38
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         const index = this.index(x, y)
         const biome = this.tiles[index]!
         if (biome === 'grass') {
           const previous = this.vegetation[index]!
-          this.vegetation[index] = Math.min(100, previous + 2)
+          const water = this.moisture[index]! / 100
+          const soil = this.fertility[index]! / 100
+          const growth = water < 0.22 || this.weather === 'drought' ? -0.42 : (0.16 + water * soil * 0.92 * seasonGrowth)
+          this.vegetation[index] = Math.max(0, Math.min(100, previous + growth))
           if (Math.floor(previous / 20) !== Math.floor(this.vegetation[index]! / 20)) this.touch(x, y)
+          continue
+        }
+        if (biome === 'ash' && this.moisture[index]! > 52 && this.fertility[index]! > 24 && this.weather !== 'drought' && this.random.next() < 0.006) {
+          this.tiles[index] = 'grass'
+          this.vegetation[index] = 12
+          this.touch(x, y)
           continue
         }
         if (biome !== 'sand' || this.random.next() > 0.008) continue
@@ -327,6 +390,9 @@ export class World {
         const dx = x - cx
         const dy = y - cy
         if (dx * dx + dy * dy > r2) continue
+        const index = this.index(x, y)
+        this.moisture[index] = Math.min(100, this.moisture[index]! + 38)
+        this.fertility[index] = Math.min(100, this.fertility[index]! + 4)
         const b = this.get(x, y)
         if (b === 'lava') this.set(x, y, 'ash')
         if (b === 'ash') this.set(x, y, 'grass')

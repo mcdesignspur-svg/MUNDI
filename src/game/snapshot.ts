@@ -1,4 +1,4 @@
-import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Creature, type DeathRecord } from './types'
+import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Creature, type DeathRecord, type Weather } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
 
 export interface Snapshot {
@@ -12,6 +12,10 @@ export interface Snapshot {
   nextId: number
   tiles: World['tiles']
   vegetation: number[]
+  moisture: number[]
+  fertility: number[]
+  weather: Weather
+  weatherUntil: number
   creatures: Creature[]
   deaths: DeathRecord[]
   fires: World['fires']
@@ -23,7 +27,8 @@ export function snapshot(world: World): Snapshot {
   return {
     format: 'mundi', version: 1, seed: world.seed, width: world.width, height: world.height,
     tick: world.tick, randomState: world.random.state, nextId: world.nextId,
-    tiles: [...world.tiles], vegetation: Array.from(world.vegetation),
+    tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
+    weather: world.weather, weatherUntil: world.weatherUntil,
     creatures: world.creatures.map(c => ({ ...c })), deaths: world.deaths.map(d => ({ ...d })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
   }
@@ -100,6 +105,10 @@ export function restore(input: unknown): World {
   const world = new World(data.seed)
   world.tiles = tiles
   world.vegetation = new Float32Array(vegetation)
+  if (data.moisture !== undefined) world.moisture = new Float32Array(list(data.moisture, count, true).map(v => number(v, 0, 100)))
+  if (data.fertility !== undefined) world.fertility = new Float32Array(list(data.fertility, count, true).map(v => number(v, 0, 100)))
+  if (data.weather !== undefined) world.weather = choice(data.weather, ['clear', 'rain', 'drought'] as const)
+  if (data.weatherUntil !== undefined) world.weatherUntil = number(data.weatherUntil, 0, 1e12, true)
   world.creatures = creatures
   world.deaths = deaths
   world.fires = fires

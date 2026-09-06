@@ -203,6 +203,18 @@ export class Renderer {
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - 2, py + 5); ctx.stroke()
       }
     }
+    if (world.weather === 'rain' && !this.reducedMotion) {
+      ctx.strokeStyle = '#c5e9ed99'; ctx.lineWidth = 1
+      for (let i = 0; i < 70; i++) {
+        const n = tileNoise(i, Math.floor(this.time * 7), seed)
+        const px = (left + n * (right - left)) * TILE
+        const py = (top + ((i / 70 + this.time * 1.8) % 1) * (bottom - top)) * TILE
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - 3, py + 8); ctx.stroke()
+      }
+    } else if (world.weather === 'drought') {
+      ctx.fillStyle = '#d29d4730'
+      ctx.fillRect(left * TILE, top * TILE, (right - left) * TILE, (bottom - top) * TILE)
+    }
     const tileSelection = state.selection?.kind === 'tile' ? state.selection : null
     if (tileSelection) {
       ctx.strokeStyle = '#f2cd7c'; ctx.lineWidth = 2 / camera.zoom
