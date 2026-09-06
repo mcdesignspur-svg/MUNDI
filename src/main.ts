@@ -220,7 +220,7 @@ function updateInspector(): void {
       <div class="inspector-identity"><span class="portrait row-${c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2}"></span><div><h2>${KIND_NAMES[c.kind]}</h2><span class="muted">Habitante #${c.id}</span></div></div>
       <p class="activity"><span class="live-dot"></span>${ACTIVITY_NAMES[c.activity]}</p>
       <div class="vitals"><label>Salud <strong>${health}%</strong><meter min="0" max="100" value="${health}">${health}%</meter></label><label>Hambre <strong>${hunger}% · ${hungerLabel}</strong><meter class="hunger" min="0" max="100" value="${hunger}">${hunger}%</meter></label></div>
-      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']}</p>` : ''}
+      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']} · Reservas: ${Math.round(village.food)} comida, ${Math.round(village.wood)} madera, ${Math.round(village.stone)} piedra</p>` : ''}
     `
   } else {
     const biome = world.get(selection.x, selection.y), food = Math.round(world.vegetationAt(selection.x, selection.y))

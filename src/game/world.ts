@@ -366,6 +366,18 @@ export class World {
     return best
   }
 
+  nearestBiome(cx: number, cy: number, biome: Biome, radius: number): { x: number; y: number } | null {
+    const minX = Math.max(0, Math.floor(cx - radius)), maxX = Math.min(this.width - 1, Math.ceil(cx + radius))
+    const minY = Math.max(0, Math.floor(cy - radius)), maxY = Math.min(this.height - 1, Math.ceil(cy + radius))
+    let best: { x: number; y: number } | null = null, bestDistance = Infinity
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      if (this.get(x, y) !== biome) continue
+      const distance = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2
+      if (distance < bestDistance) { bestDistance = distance; best = { x, y } }
+    }
+    return best
+  }
+
   regrowNature(): void {
     const seasonGrowth = this.season() === 'spring' ? 1.25 : this.season() === 'summer' ? 0.9 : this.season() === 'autumn' ? 0.72 : 0.38
     for (let y = 0; y < this.height; y++) {

@@ -97,8 +97,13 @@ export function simulate(world: World, dt = STEP): void {
     const village = c.kind === 'human' && c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
     if (village) {
       c.activity = 'working'
-      steer(c, village.x + 0.5 - c.x, village.y + 0.5 - c.y)
-      if ((c.x - village.x) ** 2 + (c.y - village.y) ** 2 < 4) c.decisionIn = Math.min(c.decisionIn, 0.25)
+      const construction = world.buildings.find(b => b.villageId === village.id && b.progress < 1)
+      const target = (c.task === 'gathering' ? world.nearestFood(c.x, c.y, 18)
+        : c.task === 'lumber' ? world.nearestBiome(c.x, c.y, 'forest', 22)
+          : c.task === 'mining' ? world.nearestBiome(c.x, c.y, 'mountain', 26)
+            : c.task === 'building' && construction ? construction : village) ?? village
+      steer(c, target.x + 0.5 - c.x, target.y + 0.5 - c.y)
+      if ((c.x - target.x) ** 2 + (c.y - target.y) ** 2 < 2) c.decisionIn = Math.min(c.decisionIn, 0.25)
     }
 
     if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending'].includes(c.activity) && c.energy < 96) {
