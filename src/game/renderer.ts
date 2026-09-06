@@ -139,6 +139,24 @@ export class Renderer {
         ctx.fillRect(x * TILE + 4 + offset, y * TILE + 8, 6, 1)
       }
     }
+    if (state.overlay !== 'none') {
+      const burning = state.overlay === 'hazards' ? new Set(world.fires.map(f => world.index(f.x, f.y))) : undefined
+      for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+        const biome = world.get(x, y)
+        const vegetation = world.vegetationAt(x, y) / 100
+        const moisture = world.moistureAt(x, y) / 100
+        const fertility = world.fertilityAt(x, y) / 100
+        let color = ''
+        if (state.overlay === 'food') color = vegetation > 0 ? `rgba(143, 202, 78, ${0.1 + vegetation * 0.56})` : 'rgba(119, 65, 40, 0.4)'
+        if (state.overlay === 'moisture') color = `rgba(54, 155, 211, ${0.08 + moisture * 0.58})`
+        if (state.overlay === 'fertility') color = `rgba(183, 104, 196, ${0.08 + fertility * 0.54})`
+        if (state.overlay === 'hazards') {
+          color = burning?.has(world.index(x, y)) || biome === 'lava' ? 'rgba(243, 76, 43, 0.76)' : biome === 'ash' ? 'rgba(116, 93, 75, 0.6)' : 'rgba(24, 62, 71, 0.26)'
+        }
+        ctx.fillStyle = color
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE)
+      }
+    }
     // Painter order prevents trees in front of a creature from rendering behind it.
     const entities: { y: number; draw: () => void }[] = []
     for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {

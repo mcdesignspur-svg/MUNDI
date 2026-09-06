@@ -1,4 +1,4 @@
-import type { Biome, CreatureKind, GameCommand, Selection, ToolId } from './types'
+import type { Biome, CreatureKind, GameCommand, Overlay, Selection, ToolId } from './types'
 import type { World } from './world'
 
 export interface GameState {
@@ -7,6 +7,7 @@ export interface GameState {
   paused: boolean
   speed: 1 | 2 | 4
   selection: Selection
+  overlay: Overlay
 }
 
 export function dispatch(world: World, state: GameState, command: GameCommand): string | undefined {

@@ -3,7 +3,7 @@ import { Camera } from './game/camera'
 import { InputController } from './game/input'
 import { Renderer } from './game/renderer'
 import { simulate, STEP } from './game/simulation'
-import { ACTIVITY_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, SEASON_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type ToolId } from './game/types'
+import { ACTIVITY_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, OVERLAY_NAMES, SEASON_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type Overlay, type ToolId } from './game/types'
 import { World, TILE } from './game/world'
 import { dispatch, type GameState } from './game/commands'
 import { snapshot, restore } from './game/snapshot'
@@ -18,6 +18,7 @@ const icon = (name: string) => {
     save: '<path d="M4 3h13l4 4v14H3V3Z"/><path d="M7 3v6h10V3M7 21v-8h10v8"/>',
     sound: '<path d="M4 9h4l5-4v14l-5-4H4ZM17 8c3 3 3 5 0 8M20 5c5 5 5 9 0 14"/>',
     center: '<path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5"/><circle cx="12" cy="12" r="3"/>',
+    layers: '<path d="m12 3 8 4-8 4-8-4 8-4ZM4 12l8 4 8-4M4 17l8 4 8-4"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
     chevron: '<path d="m6 9 6 6 6-6"/>',
   }
@@ -73,6 +74,15 @@ app.innerHTML = `
       <button id="btn-zoom-in" class="icon-button" aria-label="Acercar mapa">+</button>
       <button id="btn-recenter" class="icon-button" aria-label="Ver el mundo completo" title="Ver el mundo completo">${icon('center')}</button>
       <button id="btn-zoom-out" class="icon-button" aria-label="Alejar mapa">−</button>
+      <button id="btn-layers" class="icon-button" aria-label="Mostrar capas del mapa" aria-expanded="false" aria-controls="layers-panel">${icon('layers')}</button>
+    </div>
+    <div id="layers-panel" class="layers-panel" aria-label="Capas del mapa" hidden>
+      <span class="eyebrow">Capas del mapa</span>
+      <button data-overlay="none" class="active" aria-pressed="true"><i class="layer-swatch normal"></i>Vista normal</button>
+      <button data-overlay="food" aria-pressed="false"><i class="layer-swatch food"></i>Alimento</button>
+      <button data-overlay="moisture" aria-pressed="false"><i class="layer-swatch moisture"></i>Humedad</button>
+      <button data-overlay="fertility" aria-pressed="false"><i class="layer-swatch fertility"></i>Fertilidad</button>
+      <button data-overlay="hazards" aria-pressed="false"><i class="layer-swatch hazards"></i>Peligros</button>
     </div>
     <div class="map-caption"><span id="world-summary"></span><span class="desktop-hint">Rueda: zoom · Espacio + arrastrar: mover</span></div>
     <div class="loading" id="loading"><strong>Despertando el mundo</strong><span>Preparando el paisaje y sus habitantes…</span></div>
@@ -135,7 +145,7 @@ app.innerHTML = `
 
 let world = new World()
 world.populate()
-const state: GameState = { tool: 'inspect', brush: 1, paused: false, speed: 1, selection: null }
+const state: GameState = { tool: 'inspect', brush: 1, paused: false, speed: 1, selection: null, overlay: 'none' }
 const camera = new Camera(1, 1)
 camera.minZoom = 0.15
 const canvas = $<HTMLCanvasElement>('world')
@@ -181,7 +191,7 @@ function refresh(): void {
   $('world-time').textContent = worldTime(world.tick)
   $('world-status').textContent = state.paused ? 'El mundo está en pausa' : world.fires.length ? world.fires.length + ' focos de fuego' : SEASON_NAMES[world.season()] + ' · ' + WEATHER_NAMES[world.weather]
   for (const kind of ['human', 'rabbit', 'wolf'] as const) $('count-' + kind).textContent = String(world.population[kind])
-  $('world-summary').textContent = 'Vegetación ' + world.vegetationLevel() + '% · ' + world.creatures.length + ' seres'
+  $('world-summary').textContent = 'Vegetación ' + world.vegetationLevel() + '% · ' + world.creatures.length + ' seres' + (state.overlay === 'none' ? '' : ' · Capa: ' + OVERLAY_NAMES[state.overlay])
   $('pause-symbol').textContent = state.paused ? '▶' : 'Ⅱ'
   $('btn-pause').setAttribute('aria-label', state.paused ? 'Reanudar mundo' : 'Pausar mundo')
   $('btn-pause').setAttribute('aria-pressed', String(state.paused))
@@ -279,6 +289,21 @@ $<HTMLInputElement>('brush').addEventListener('input', e => { state.brush = Numb
 $('btn-recenter').addEventListener('click', () => { following = false; fit() })
 $('btn-zoom-in').addEventListener('click', () => camera.zoomAt(camera.viewW / 2, camera.viewH / 2, 1.3))
 $('btn-zoom-out').addEventListener('click', () => camera.zoomAt(camera.viewW / 2, camera.viewH / 2, 1 / 1.3))
+$('btn-layers').addEventListener('click', () => {
+  const panel = $('layers-panel')
+  panel.hidden = !panel.hidden
+  $('btn-layers').setAttribute('aria-expanded', String(!panel.hidden))
+  $('btn-layers').setAttribute('aria-label', panel.hidden ? 'Mostrar capas del mapa' : 'Ocultar capas del mapa')
+})
+document.querySelectorAll<HTMLButtonElement>('[data-overlay]').forEach(button => button.addEventListener('click', () => {
+  state.overlay = button.dataset.overlay as Overlay
+  document.querySelectorAll<HTMLButtonElement>('[data-overlay]').forEach(item => {
+    const active = item.dataset.overlay === state.overlay
+    item.classList.toggle('active', active)
+    item.setAttribute('aria-pressed', String(active))
+  })
+  refresh()
+}))
 async function toggleSound(): Promise<void> {
   try {
     await sound.unlock()

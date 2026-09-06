@@ -12,6 +12,7 @@ export type Biome =
 export type CreatureKind = 'human' | 'rabbit' | 'wolf'
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
 export type Weather = 'clear' | 'rain' | 'drought'
+export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'hazards'
 export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque'
 
 export interface DeathRecord {
@@ -74,6 +75,7 @@ export const DEATH_CAUSE_NAMES: Record<DeathCause, string> = {
 }
 export const SEASON_NAMES: Record<Season, string> = { spring: 'Primavera', summer: 'Verano', autumn: 'Otoño', winter: 'Invierno' }
 export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía' }
+export const OVERLAY_NAMES: Record<Overlay, string> = { none: 'Normal', food: 'Alimento', moisture: 'Humedad', fertility: 'Fertilidad', hazards: 'Peligros' }
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
   hunting: 'Cazando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', resting: 'Descansando',
