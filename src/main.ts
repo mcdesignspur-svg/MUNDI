@@ -3,7 +3,7 @@ import { Camera } from './game/camera'
 import { InputController } from './game/input'
 import { Renderer } from './game/renderer'
 import { simulate, STEP } from './game/simulation'
-import { ACTIVITY_NAMES, MAX_HEALTH, type Biome, type GameCommand, type ToolId } from './game/types'
+import { ACTIVITY_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, type Biome, type GameCommand, type ToolId } from './game/types'
 import { World, TILE } from './game/world'
 import { dispatch, type GameState } from './game/commands'
 import { snapshot, restore } from './game/snapshot'
@@ -164,6 +164,10 @@ function worldTime(tick: number): string {
   const minutes = Math.floor(tick / 20)
   return 'Día ' + (Math.floor(minutes / 1440) + 1) + ' · ' + String(Math.floor(minutes / 60) % 24).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0')
 }
+function ageText(age: number, kind: keyof typeof MAX_AGE): string {
+  const remaining = Math.max(0, Math.round(MAX_AGE[kind] - age))
+  return Math.floor(age) + ' min · aprox. ' + remaining + ' min restantes'
+}
 function fit(): void {
   camera.centerOn(world.width * TILE / 2, world.height * TILE / 2)
   camera.zoom = Math.max(camera.minZoom, Math.min(camera.viewW / (world.width * TILE), camera.viewH / (world.height * TILE)) * 0.94)
@@ -200,18 +204,21 @@ function updateInspector(): void {
   if (selection.kind === 'creature') {
     if (!c) { $('inspector-content').innerHTML = '<h2>La vida sigue</h2><p>Este ser ya no habita el mundo. Selecciona otro para continuar observando.</p>'; following = false; return }
     const health = Math.max(0, Math.round(c.life / MAX_HEALTH[c.kind] * 100)), hunger = Math.max(0, Math.min(100, Math.round(100 - c.energy)))
+    const hungerLabel = hunger < 25 ? 'Saciado' : hunger < 55 ? 'Con hambre' : hunger < 80 ? 'Hambriento' : 'En inanición'
     $('inspector-content').innerHTML = `
       <div class="inspector-identity"><span class="portrait row-${c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2}"></span><div><h2>${KIND_NAMES[c.kind]}</h2><span class="muted">Habitante #${c.id}</span></div></div>
       <p class="activity"><span class="live-dot"></span>${ACTIVITY_NAMES[c.activity]}</p>
-      <div class="vitals"><label>Salud <strong>${health}%</strong><meter min="0" max="100" value="${health}">${health}%</meter></label><label>Hambre <strong>${hunger}%</strong><meter class="hunger" min="0" max="100" value="${hunger}">${hunger}%</meter></label></div>
-      <dl><div><dt>Edad</dt><dd>${Math.floor(c.age)} min</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div></dl>
+      <div class="vitals"><label>Salud <strong>${health}%</strong><meter min="0" max="100" value="${health}">${health}%</meter></label><label>Hambre <strong>${hunger}% · ${hungerLabel}</strong><meter class="hunger" min="0" max="100" value="${hunger}">${hunger}%</meter></label></div>
+      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div></dl>
     `
   } else {
     const biome = world.get(selection.x, selection.y), food = Math.round(world.vegetationAt(selection.x, selection.y))
+    const loss = world.deaths.find(d => (d.x - selection.x) ** 2 + (d.y - selection.y) ** 2 < 36)
+    const lossText = loss ? `<p class="recent-loss"><strong>Última pérdida cerca de aquí</strong>${KIND_NAMES[loss.kind]} #${loss.id} · ${DEATH_CAUSE_NAMES[loss.cause]} · hace ${Math.max(0, Math.floor((world.tick - loss.tick) / 20))} min</p>` : ''
     $('inspector-content').innerHTML = `
       <h2>${BIOME_NAMES[biome]}</h2><p class="muted">Celda ${selection.x + 1}, ${selection.y + 1}</p>
       <dl><div><dt>Vegetación</dt><dd>${food}%</dd></div><div><dt>Estado</dt><dd>${world.fires.some(f => f.x === selection.x && f.y === selection.y) ? 'En llamas' : 'En calma'}</dd></div></dl>
-      <p>${biome === 'grass' ? 'Los herbívoros se alimentan aquí. La pradera vuelve a crecer con el tiempo.' : biome === 'forest' ? 'Un refugio de árboles. El fuego puede convertirlo en ceniza.' : biome === 'water' || biome === 'deepWater' ? 'Los habitantes terrestres buscan un camino alrededor del agua.' : 'Pinta el terreno o aplica un poder para transformar este lugar.'}</p>
+      <p>${biome === 'grass' ? 'Los herbívoros se alimentan aquí. La pradera vuelve a crecer con el tiempo.' : biome === 'forest' ? 'Un refugio de árboles. El fuego puede convertirlo en ceniza.' : biome === 'water' || biome === 'deepWater' ? 'Los habitantes terrestres buscan un camino alrededor del agua.' : 'Pinta el terreno o aplica un poder para transformar este lugar.'}</p>${lossText}
     `
   }
 }

@@ -82,3 +82,5 @@ dialog { width: min(520px, calc(100vw - 24px)); max-height: min(720px, calc(100d
 }
 @media (max-width: 390px) { .topbar { min-height: 51px; }.time-card strong { font-size: .84rem; }.time-card #world-status { font-size: .61rem; }.category-tabs button { padding: 0 7px; }.tool-grid { gap: 4px; }.tool { flex-basis: 61px; min-width: 61px; }.map-caption { max-width: 180px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+.recent-loss { padding: 9px 10px; border-left: 3px solid var(--coral); border-radius: 0 7px 7px 0; background: #4d292833; color: #f2c7b5 !important; }
+.recent-loss strong { display: block; margin-bottom: 3px; color: #ffb08d; font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }

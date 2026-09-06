@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, WALKABLE, type Creature } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Creature, type DeathCause } from './types'
 import { MAX_FIRES, type World } from './world'
 
 export const STEP = 1 / 20
@@ -36,16 +36,19 @@ export function simulate(world: World, dt = STEP): void {
   const births: { x: number; y: number }[] = []
   for (const c of world.creatures) {
     if (c.life <= 0) continue
+    let deathCause: DeathCause | null = null
     c.age += dt
     c.decisionIn -= dt
     c.breedCooldown = Math.max(0, c.breedCooldown - dt)
     c.attackCooldown = Math.max(0, c.attackCooldown - dt)
     c.hurt = Math.max(0, c.hurt - dt)
     c.energy -= METABOLISM[c.kind] * dt * (c.activity === 'resting' ? 0.5 : 1)
-    if (c.energy <= 0) damage(c, 4 * dt)
+    if (c.energy <= 0) { damage(c, 4 * dt); deathCause = 'hambruna' }
     const tx = Math.floor(c.x), ty = Math.floor(c.y)
-    if (burning.has(world.index(tx, ty))) damage(c, 14 * dt)
-    if (world.get(tx, ty) === 'lava') damage(c, 35 * dt)
+    if (burning.has(world.index(tx, ty))) { damage(c, 14 * dt); deathCause = 'fuego' }
+    if (world.get(tx, ty) === 'lava') { damage(c, 35 * dt); deathCause = 'lava' }
+    if (c.age >= MAX_AGE[c.kind]) { c.life = 0; deathCause = 'vejez' }
+    if (c.life <= 0) { world.recordDeath(c, deathCause ?? 'ataque'); continue }
 
     if (c.decisionIn <= 0) {
       c.decisionIn = 0.45 + world.random.next() * 0.75
@@ -117,6 +120,7 @@ export function simulate(world: World, dt = STEP): void {
       const fatal = damage(target, c.kind === 'wolf' ? (target.kind === 'human' ? 7 : 10) : (target.kind === 'wolf' ? 8 : 6))
       c.attackCooldown = c.kind === 'wolf' ? 0.72 : 0.82
       if (fatal) {
+        world.recordDeath(target, 'ataque')
         c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24))
         c.activity = 'eating'
         c.decisionIn = Math.min(c.decisionIn, 0.35)

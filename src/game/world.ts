@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type FireCell, type MeteorFx } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type MeteorFx } from './types'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
 
@@ -52,6 +52,7 @@ export class World {
   terrainVersions = new Uint32Array(36)
   rainEffects: { x: number; y: number; age: number; radius: number }[] = []
   creatures: Creature[] = []
+  deaths: DeathRecord[] = []
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
   nextId = 1
@@ -123,6 +124,7 @@ export class World {
       }
     }
     this.creatures = []
+    this.deaths = []
     this.fires = []
     this.meteors = []
     this.nextId = 1
@@ -180,6 +182,12 @@ export class World {
     this.revision++
     this.recount()
     return c
+  }
+
+  recordDeath(creature: Creature, cause: DeathCause): void {
+    this.deaths.unshift({ id: creature.id, kind: creature.kind, x: creature.x, y: creature.y, cause, tick: this.tick })
+    if (this.deaths.length > 12) this.deaths.length = 12
+    this.revision++
   }
 
   paintBrush(cx: number, cy: number, biome: Biome, radius: number): void {

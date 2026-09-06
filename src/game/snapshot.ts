@@ -1,4 +1,4 @@
-import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Creature } from './types'
+import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Creature, type DeathRecord } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
 
 export interface Snapshot {
@@ -13,6 +13,7 @@ export interface Snapshot {
   tiles: World['tiles']
   vegetation: number[]
   creatures: Creature[]
+  deaths: DeathRecord[]
   fires: World['fires']
   meteors: World['meteors']
   rainEffects: World['rainEffects']
@@ -23,7 +24,7 @@ export function snapshot(world: World): Snapshot {
     format: 'mundi', version: 1, seed: world.seed, width: world.width, height: world.height,
     tick: world.tick, randomState: world.random.state, nextId: world.nextId,
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation),
-    creatures: world.creatures.map(c => ({ ...c })), fires: world.fires.map(f => ({ ...f })),
+    creatures: world.creatures.map(c => ({ ...c })), deaths: world.deaths.map(d => ({ ...d })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
   }
 }
@@ -74,6 +75,16 @@ export function restore(input: unknown): World {
     }
   })
   const firePositions = new Set<number>()
+  const deaths = data.deaths === undefined ? [] : list(data.deaths, 12).map(raw => {
+    const d = object(raw)
+    return {
+      id: number(d.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
+      kind: choice(d.kind, ['human', 'rabbit', 'wolf'] as const),
+      x: number(d.x, 0, WORLD_W - 0.000001), y: number(d.y, 0, WORLD_H - 0.000001),
+      cause: choice(d.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque'] as const),
+      tick: number(d.tick, 0, 1e12, true),
+    }
+  })
   const fires = list(data.fires, count).map(raw => {
     const f = object(raw)
     const x = number(f.x, 0, WORLD_W - 1, true), y = number(f.y, 0, WORLD_H - 1, true)
@@ -90,6 +101,7 @@ export function restore(input: unknown): World {
   world.tiles = tiles
   world.vegetation = new Float32Array(vegetation)
   world.creatures = creatures
+  world.deaths = deaths
   world.fires = fires
   world.meteors = effects(data.meteors, 64, 1, 32)
   world.rainEffects = effects(data.rainEffects, 12, 2, 16)
