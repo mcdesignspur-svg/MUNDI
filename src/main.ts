@@ -3,7 +3,7 @@ import { Camera } from './game/camera'
 import { InputController } from './game/input'
 import { Renderer } from './game/renderer'
 import { simulate, STEP } from './game/simulation'
-import { ACTIVITY_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, OVERLAY_NAMES, SEASON_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type Overlay, type ToolId } from './game/types'
+import { ACTIVITY_NAMES, BUILDING_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, OVERLAY_NAMES, SEASON_NAMES, TASK_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type Overlay, type ToolId } from './game/types'
 import { World, TILE } from './game/world'
 import { dispatch, type GameState } from './game/commands'
 import { snapshot, restore } from './game/snapshot'
@@ -191,7 +191,7 @@ function refresh(): void {
   $('world-time').textContent = worldTime(world.tick)
   $('world-status').textContent = state.paused ? 'El mundo está en pausa' : world.fires.length ? world.fires.length + ' focos de fuego' : SEASON_NAMES[world.season()] + ' · ' + WEATHER_NAMES[world.weather]
   for (const kind of ['human', 'rabbit', 'wolf'] as const) $('count-' + kind).textContent = String(world.population[kind])
-  $('world-summary').textContent = 'Vegetación ' + world.vegetationLevel() + '% · ' + world.creatures.length + ' seres' + (state.overlay === 'none' ? '' : ' · Capa: ' + OVERLAY_NAMES[state.overlay])
+  $('world-summary').textContent = 'Vegetación ' + world.vegetationLevel() + '% · ' + world.creatures.length + ' seres' + (world.villages.length ? ' · ' + world.villages.length + ' aldea' + (world.villages.length > 1 ? 's' : '') : '') + (state.overlay === 'none' ? '' : ' · Capa: ' + OVERLAY_NAMES[state.overlay])
   $('pause-symbol').textContent = state.paused ? '▶' : 'Ⅱ'
   $('btn-pause').setAttribute('aria-label', state.paused ? 'Reanudar mundo' : 'Pausar mundo')
   $('btn-pause').setAttribute('aria-pressed', String(state.paused))
@@ -215,21 +215,25 @@ function updateInspector(): void {
     if (!c) { $('inspector-content').innerHTML = '<h2>La vida sigue</h2><p>Este ser ya no habita el mundo. Selecciona otro para continuar observando.</p>'; following = false; return }
     const health = Math.max(0, Math.round(c.life / MAX_HEALTH[c.kind] * 100)), hunger = Math.max(0, Math.min(100, Math.round(100 - c.energy)))
     const hungerLabel = hunger < 25 ? 'Saciado' : hunger < 55 ? 'Con hambre' : hunger < 80 ? 'Hambriento' : 'En inanición'
+    const village = c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
     $('inspector-content').innerHTML = `
       <div class="inspector-identity"><span class="portrait row-${c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2}"></span><div><h2>${KIND_NAMES[c.kind]}</h2><span class="muted">Habitante #${c.id}</span></div></div>
       <p class="activity"><span class="live-dot"></span>${ACTIVITY_NAMES[c.activity]}</p>
       <div class="vitals"><label>Salud <strong>${health}%</strong><meter min="0" max="100" value="${health}">${health}%</meter></label><label>Hambre <strong>${hunger}% · ${hungerLabel}</strong><meter class="hunger" min="0" max="100" value="${hunger}">${hunger}%</meter></label></div>
-      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div></dl>
+      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']}</p>` : ''}
     `
   } else {
     const biome = world.get(selection.x, selection.y), food = Math.round(world.vegetationAt(selection.x, selection.y))
     const loss = world.deaths.find(d => (d.x - selection.x) ** 2 + (d.y - selection.y) ** 2 < 36)
     const lossText = loss ? `<p class="recent-loss"><strong>Última pérdida cerca de aquí</strong>${KIND_NAMES[loss.kind]} #${loss.id} · ${DEATH_CAUSE_NAMES[loss.cause]} · hace ${Math.max(0, Math.floor((world.tick - loss.tick) / 20))} min</p>` : ''
     const moisture = Math.round(world.moistureAt(selection.x, selection.y)), fertility = Math.round(world.fertilityAt(selection.x, selection.y))
+    const building = world.buildingAt(selection.x, selection.y)
+    const village = building ? world.villages.find(v => v.id === building.villageId) : undefined
+    const villageText = building && village ? `<p class="village-note"><strong>${village.name} · ${BUILDING_NAMES[building.type]}</strong>${building.progress < 1 ? 'En construcción: ' + Math.round(building.progress * 100) + '%' : 'Población ' + village.members.length + ' · Comida ' + Math.round(village.food) + ' · Madera ' + Math.round(village.wood) + ' · Piedra ' + Math.round(village.stone)}</p>` : ''
     $('inspector-content').innerHTML = `
       <h2>${BIOME_NAMES[biome]}</h2><p class="muted">Celda ${selection.x + 1}, ${selection.y + 1}</p>
       <dl><div><dt>Vegetación</dt><dd>${food}%</dd></div><div><dt>Humedad</dt><dd>${moisture}%</dd></div><div><dt>Fertilidad</dt><dd>${fertility}%</dd></div><div><dt>Estado</dt><dd>${world.fires.some(f => f.x === selection.x && f.y === selection.y) ? 'En llamas' : WEATHER_NAMES[world.weather]}</dd></div></dl>
-      <p>${biome === 'grass' ? 'Los herbívoros se alimentan aquí. La pradera vuelve a crecer con el tiempo.' : biome === 'forest' ? 'Un refugio de árboles. El fuego puede convertirlo en ceniza.' : biome === 'water' || biome === 'deepWater' ? 'Los habitantes terrestres buscan un camino alrededor del agua.' : 'Pinta el terreno o aplica un poder para transformar este lugar.'}</p>${lossText}
+      <p>${biome === 'grass' ? 'Los herbívoros se alimentan aquí. La pradera vuelve a crecer con el tiempo.' : biome === 'forest' ? 'Un refugio de árboles. El fuego puede convertirlo en ceniza.' : biome === 'water' || biome === 'deepWater' ? 'Los habitantes terrestres buscan un camino alrededor del agua.' : 'Pinta el terreno o aplica un poder para transformar este lugar.'}</p>${villageText}${lossText}
     `
   }
 }

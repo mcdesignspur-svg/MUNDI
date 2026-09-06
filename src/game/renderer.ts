@@ -169,6 +169,25 @@ export class Renderer {
         this.sprite(ctx, sprite, x * TILE + 8, y * TILE + 16, sprite === 14 ? 23 : 32)
       } })
     }
+    for (const building of world.buildings) {
+      if (building.x < left || building.x > right || building.y < top || building.y > bottom) continue
+      entities.push({ y: building.y + 0.85, draw: () => {
+        const px = building.x * TILE, py = building.y * TILE
+        ctx.fillStyle = '#142a2488'; ctx.fillRect(px - 7, py + 8, 15, 4)
+        if (building.progress < 1) {
+          ctx.strokeStyle = '#e7bd66'; ctx.lineWidth = 2
+          ctx.strokeRect(px - 6, py - 10, 13, 18)
+          ctx.fillStyle = '#e7bd6655'; ctx.fillRect(px - 5, py + 5, Math.max(1, 11 * building.progress), 2)
+          return
+        }
+        const wall = building.type === 'farm' ? '#8aa45c' : building.type === 'sawmill' ? '#98704a' : '#d6b57a'
+        const roof = building.type === 'storehouse' ? '#7e4b3d' : '#b65e46'
+        ctx.fillStyle = wall; ctx.fillRect(px - 7, py - 8, 15, 16)
+        ctx.fillStyle = roof; ctx.fillRect(px - 9, py - 12, 19, 5)
+        if (building.type === 'farm') { ctx.fillStyle = '#d5be62'; ctx.fillRect(px - 9, py + 7, 19, 3) }
+        else { ctx.fillStyle = '#4d322a'; ctx.fillRect(px - 2, py + 1, 4, 7) }
+      } })
+    }
     for (const c of world.creatures) {
       if (c.x < left || c.x > right || c.y < top || c.y > bottom) continue
       entities.push({ y: c.y, draw: () => {

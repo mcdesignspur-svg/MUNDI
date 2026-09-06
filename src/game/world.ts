@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type MeteorFx, type Season, type Weather } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Building, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type Season, type Village, type Weather } from './types'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
 
@@ -54,6 +54,8 @@ export class World {
   terrainVersions = new Uint32Array(36)
   rainEffects: { x: number; y: number; age: number; radius: number }[] = []
   creatures: Creature[] = []
+  villages: Village[] = []
+  buildings: Building[] = []
   deaths: DeathRecord[] = []
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
@@ -139,6 +141,8 @@ export class World {
       }
     }
     this.creatures = []
+    this.villages = []
+    this.buildings = []
     this.deaths = []
     this.fires = []
     this.meteors = []
@@ -194,6 +198,7 @@ export class World {
       decisionIn: 0.15 + this.random.next() * 0.35,
       hurt: 0,
       attackCooldown: 0,
+      task: kind === 'human' ? 'idle' : undefined,
     }
     this.creatures.push(c)
     this.revision++
@@ -205,6 +210,57 @@ export class World {
     this.deaths.unshift({ id: creature.id, kind: creature.kind, x: creature.x, y: creature.y, cause, tick: this.tick })
     if (this.deaths.length > 12) this.deaths.length = 12
     this.revision++
+  }
+
+  buildingAt(x: number, y: number): Building | undefined { return this.buildings.find(b => b.x === x && b.y === y) }
+
+  private waterNear(x: number, y: number): boolean {
+    for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) if (this.inBounds(x + dx, y + dy) && (this.get(x + dx, y + dy) === 'water' || this.get(x + dx, y + dy) === 'deepWater')) return true
+    return false
+  }
+
+  advanceVillages(): void {
+    const adults = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12)
+    if (!this.villages.length && adults.length >= 5) {
+      let site: { x: number; y: number } | undefined = adults.find(c => this.get(Math.floor(c.x), Math.floor(c.y)) === 'grass' && this.waterNear(Math.floor(c.x), Math.floor(c.y)))
+      if (!site) {
+        for (let y = 8; y < this.height - 8 && !site; y++) for (let x = 8; x < this.width - 8; x++) {
+          if (this.get(x, y) === 'grass' && this.vegetationAt(x, y) > 45 && this.waterNear(x, y)) { site = { x, y }; break }
+        }
+      }
+      if (site) {
+        const members = adults.slice(0, Math.min(8, adults.length))
+        const village: Village = { id: 1, name: 'Aldea del Roble', x: Math.floor(site.x), y: Math.floor(site.y), color: '#e7bd66', food: 28, wood: 12, stone: 5, members: members.map(c => c.id), buildingQueue: ['home', 'storehouse', 'farm', 'sawmill'] }
+        this.villages.push(village)
+        for (const c of members) { c.villageId = village.id; c.task = 'gathering'; c.activity = 'working' }
+        this.revision++
+      }
+    }
+    for (const village of this.villages) {
+      const members = this.creatures.filter(c => c.villageId === village.id && c.life > 0)
+      village.members = members.map(c => c.id)
+      if (!members.length) continue
+      const active = this.buildings.find(b => b.villageId === village.id && b.progress < 1)
+      for (const human of members) {
+        const task: HumanTask = active ? 'building' : village.food < 48 ? 'gathering' : village.wood < 24 ? 'lumber' : village.stone < 12 ? 'mining' : 'gathering'
+        human.task = task; human.activity = 'working'
+      }
+      const count = (task: HumanTask) => members.filter(c => c.task === task).length
+      village.food = Math.max(0, village.food - members.length * 0.22 + count('gathering') * 1.4)
+      village.wood += count('lumber') * 0.8
+      village.stone += count('mining') * 0.48
+      if (active) active.progress = Math.min(1, active.progress + count('building') * 0.045)
+      else {
+        const type = village.buildingQueue[0]
+        const cost = type === 'home' ? [8, 3] : type === 'storehouse' ? [12, 4] : type === 'farm' ? [6, 0] : [16, 6]
+        if (type && village.wood >= cost[0] && village.stone >= cost[1]) {
+          village.wood -= cost[0]; village.stone -= cost[1]; village.buildingQueue.shift()
+          const offset = [[2, 1], [-2, 1], [1, -2], [-2, -2]][this.buildings.filter(b => b.villageId === village.id).length] ?? [3, 3]
+          this.buildings.push({ id: this.buildings.length + 1, villageId: village.id, type, x: village.x + offset[0], y: village.y + offset[1], progress: 0.02 })
+        }
+      }
+      this.revision++
+    }
   }
 
   paintBrush(cx: number, cy: number, biome: Biome, radius: number): void {

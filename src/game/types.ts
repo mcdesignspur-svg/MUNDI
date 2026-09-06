@@ -14,6 +14,11 @@ export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
 export type Weather = 'clear' | 'rain' | 'drought'
 export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'hazards'
 export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque'
+export type HumanTask = 'gathering' | 'lumber' | 'mining' | 'building' | 'idle'
+export type BuildingType = 'home' | 'storehouse' | 'farm' | 'sawmill'
+
+export interface Building { id: number; villageId: number; type: BuildingType; x: number; y: number; progress: number }
+export interface Village { id: number; name: string; x: number; y: number; color: string; food: number; wood: number; stone: number; members: number[]; buildingQueue: BuildingType[] }
 
 export interface DeathRecord {
   id: number
@@ -57,9 +62,11 @@ export interface Creature {
   /** Seconds of the red impact flash still visible. */
   hurt: number
   attackCooldown: number
+  villageId?: number
+  task?: HumanTask
 }
 
-export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'defending' | 'fleeing' | 'resting'
+export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'defending' | 'fleeing' | 'resting' | 'working'
 export type Selection = { kind: 'creature'; id: number } | { kind: 'tile'; x: number; y: number } | null
 export type GameCommand =
   | { type: 'apply'; tool: ToolId; x: number; y: number; radius: number }
@@ -78,8 +85,10 @@ export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable',
 export const OVERLAY_NAMES: Record<Overlay, string> = { none: 'Normal', food: 'Alimento', moisture: 'Humedad', fertility: 'Fertilidad', hazards: 'Peligros' }
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
-  hunting: 'Cazando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', resting: 'Descansando',
+  hunting: 'Cazando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', resting: 'Descansando', working: 'Trabajando',
 }
+export const TASK_NAMES: Record<HumanTask, string> = { gathering: 'Recolectando alimento', lumber: 'Cortando madera', mining: 'Extrayendo piedra', building: 'Construyendo', idle: 'Sin tarea' }
+export const BUILDING_NAMES: Record<BuildingType, string> = { home: 'Vivienda', storehouse: 'Almacén', farm: 'Granja', sawmill: 'Aserradero' }
 
 export interface FireCell {
   x: number

@@ -94,6 +94,13 @@ export function simulate(world: World, dt = STEP): void {
       }
     }
 
+    const village = c.kind === 'human' && c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
+    if (village) {
+      c.activity = 'working'
+      steer(c, village.x + 0.5 - c.x, village.y + 0.5 - c.y)
+      if ((c.x - village.x) ** 2 + (c.y - village.y) ** 2 < 4) c.decisionIn = Math.min(c.decisionIn, 0.25)
+    }
+
     if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending'].includes(c.activity) && c.energy < 96) {
       const eaten = world.graze(tx, ty, (c.kind === 'rabbit' ? 5 : 3) * dt)
       c.energy = Math.min(100, c.energy + eaten * 1.25)
@@ -177,7 +184,7 @@ export function simulate(world: World, dt = STEP): void {
     }
     world.fires = next
   }
-  if (world.tick % 20 === 0) { world.updateClimate(); world.regrowNature() }
+  if (world.tick % 20 === 0) { world.updateClimate(); world.regrowNature(); world.advanceVillages() }
   if (world.tick % 90 === 0) {
     for (let i = 0; i < world.tiles.length; i++) {
       if (world.tiles[i] === 'lava' && world.random.next() < 0.15) world.set(i % world.width, Math.floor(i / world.width), 'ash')

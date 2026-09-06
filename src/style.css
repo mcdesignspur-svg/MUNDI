@@ -90,4 +90,5 @@ dialog { width: min(520px, calc(100vw - 24px)); max-height: min(720px, calc(100d
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
 .recent-loss { padding: 9px 10px; border-left: 3px solid var(--coral); border-radius: 0 7px 7px 0; background: #4d292833; color: #f2c7b5 !important; }
 .recent-loss strong { display: block; margin-bottom: 3px; color: #ffb08d; font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
+.village-note { padding: 9px 10px; border-left: 3px solid var(--gold); border-radius: 0 7px 7px 0; background: #e7bd6618; color: #e9dfbd !important; }.village-note strong { display: block; margin-bottom: 3px; color: var(--gold-strong); font-size: .7rem; }
 @media (max-width: 760px) { .layers-panel { right: calc(62px + var(--safe-right)); bottom: 10px; width: 180px; }.layers-panel button { min-height: 44px; } }

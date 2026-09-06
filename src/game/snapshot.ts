@@ -1,4 +1,4 @@
-import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Creature, type DeathRecord, type Weather } from './types'
+import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Building, type Creature, type DeathRecord, type HumanTask, type Village, type Weather } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
 
 export interface Snapshot {
@@ -17,6 +17,8 @@ export interface Snapshot {
   weather: Weather
   weatherUntil: number
   creatures: Creature[]
+  villages: Village[]
+  buildings: Building[]
   deaths: DeathRecord[]
   fires: World['fires']
   meteors: World['meteors']
@@ -29,7 +31,7 @@ export function snapshot(world: World): Snapshot {
     tick: world.tick, randomState: world.random.state, nextId: world.nextId,
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
     weather: world.weather, weatherUntil: world.weatherUntil,
-    creatures: world.creatures.map(c => ({ ...c })), deaths: world.deaths.map(d => ({ ...d })), fires: world.fires.map(f => ({ ...f })),
+    creatures: world.creatures.map(c => ({ ...c })), villages: world.villages.map(v => ({ ...v, members: [...v.members], buildingQueue: [...v.buildingQueue] })), buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
   }
 }
@@ -76,10 +78,20 @@ export function restore(input: unknown): World {
       energy: number(c.energy, -100, 100), age: number(c.age, 0, 1e12),
       breedCooldown: number(c.breedCooldown, 0, 1e6), decisionIn: number(c.decisionIn, -1, 2),
       hurt: optionalNumber(c.hurt, 0, 1), attackCooldown: optionalNumber(c.attackCooldown, 0, 2),
+      villageId: c.villageId === undefined ? undefined : number(c.villageId, 1, 1000, true),
+      task: c.task === undefined ? 'idle' : choice(c.task, ['gathering', 'lumber', 'mining', 'building', 'idle'] as HumanTask[]),
       activity: choice(c.activity, Object.keys(ACTIVITY_NAMES) as Creature['activity'][]),
     }
   })
   const firePositions = new Set<number>()
+  const villages = data.villages === undefined ? [] : list(data.villages, 30).map(raw => {
+    const v = object(raw)
+    return { id: number(v.id, 1, 1000, true), name: typeof v.name === 'string' ? v.name.slice(0, 40) : 'Aldea', x: number(v.x, 0, WORLD_W - 1, true), y: number(v.y, 0, WORLD_H - 1, true), color: typeof v.color === 'string' ? v.color : '#e7bd66', food: number(v.food, 0, 1e6), wood: number(v.wood, 0, 1e6), stone: number(v.stone, 0, 1e6), members: list(v.members, MAX_AGENTS).map(id => number(id, 1, Number.MAX_SAFE_INTEGER, true)), buildingQueue: list(v.buildingQueue, 4).map(type => choice(type, ['home', 'storehouse', 'farm', 'sawmill'] as const)) }
+  })
+  const buildings = data.buildings === undefined ? [] : list(data.buildings, 120).map(raw => {
+    const b = object(raw)
+    return { id: number(b.id, 1, 10000, true), villageId: number(b.villageId, 1, 1000, true), type: choice(b.type, ['home', 'storehouse', 'farm', 'sawmill'] as const), x: number(b.x, 0, WORLD_W - 1, true), y: number(b.y, 0, WORLD_H - 1, true), progress: number(b.progress, 0, 1) }
+  })
   const deaths = data.deaths === undefined ? [] : list(data.deaths, 12).map(raw => {
     const d = object(raw)
     return {
@@ -110,6 +122,8 @@ export function restore(input: unknown): World {
   if (data.weather !== undefined) world.weather = choice(data.weather, ['clear', 'rain', 'drought'] as const)
   if (data.weatherUntil !== undefined) world.weatherUntil = number(data.weatherUntil, 0, 1e12, true)
   world.creatures = creatures
+  world.villages = villages
+  world.buildings = buildings
   world.deaths = deaths
   world.fires = fires
   world.meteors = effects(data.meteors, 64, 1, 32)
