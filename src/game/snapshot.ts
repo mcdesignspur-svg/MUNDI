@@ -73,7 +73,7 @@ export function restore(input: unknown): World {
     if (ids.has(id)) throw new Error('La partida contiene seres duplicados.')
     ids.add(id)
     const intent = c.intent === undefined ? 'none' : choice(c.intent, ['none', 'foraging', 'sheltering', 'migrating', 'fleeing', 'resting', 'stalking', 'hunting'] as AnimalIntent[])
-    const intentReason = c.intentReason === undefined ? 'none' : choice(c.intentReason, ['none', 'danger', 'fire', 'food', 'habitat', 'prey', 'rest'] as AnimalReason[])
+    const intentReason = c.intentReason === undefined ? 'none' : choice(c.intentReason, ['none', 'danger', 'fire', 'water', 'food', 'habitat', 'prey', 'rest'] as AnimalReason[])
     return {
       id, kind, x: number(c.x, 0, WORLD_W - 0.000001), y: number(c.y, 0, WORLD_H - 0.000001),
       vx: number(c.vx, -1, 1), vy: number(c.vy, -1, 1), life: number(c.life, 0, MAX_HEALTH[kind]),

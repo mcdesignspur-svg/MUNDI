@@ -212,7 +212,18 @@ export function simulate(world: World, dt = STEP): void {
     if (c.age >= MAX_AGE[c.kind]) { c.life = 0; deathCause = 'vejez' }
     if (c.life <= 0) { world.recordDeath(c, deathCause ?? 'ataque'); continue }
 
-    if (c.decisionIn <= 0) {
+    // Painting water, a meteor, or map generation can leave a creature on a
+    // non-walkable tile. Give it a direct shoreline target so it never waits
+    // indefinitely for a random direction that happens to work.
+    const stranded = !WALKABLE.has(world.get(tx, ty))
+    if (stranded) {
+      const shore = world.nearestWalkable(c.x, c.y)
+      if (shore) {
+        if (c.kind === 'human') { c.activity = 'fleeing'; steer(c, shore.x + 0.5 - c.x, shore.y + 0.5 - c.y) }
+        else setAnimalGoal(c, 'fleeing', 'water', shore.x + 0.5, shore.y + 0.5, world.tick + 20 * 20)
+        c.decisionIn = Math.max(c.decisionIn, 0.5)
+      }
+    } else if (c.decisionIn <= 0) {
       c.decisionIn = 0.45 + world.random.next() * 0.75
       if (c.kind === 'rabbit') decideRabbit(world, c)
       else if (c.kind === 'wolf') decideWolf(world, c)
@@ -257,7 +268,9 @@ export function simulate(world: World, dt = STEP): void {
     if (!engaged && c.activity !== 'eating' && c.activity !== 'resting') {
       const speed = SPEED[c.kind] * dt * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : 1)
       const nx = c.x + c.vx * speed, ny = c.y + c.vy * speed
-      if (world.inBounds(Math.floor(nx), Math.floor(ny)) && WALKABLE.has(world.get(Math.floor(nx), Math.floor(ny)))) { c.x = nx; c.y = ny }
+      // A stranded creature may cross a few water cells only while following
+      // its emergency shore route; ordinary navigation still never enters water.
+      if (world.inBounds(Math.floor(nx), Math.floor(ny)) && (WALKABLE.has(world.get(Math.floor(nx), Math.floor(ny))) || stranded)) { c.x = nx; c.y = ny }
       else c.decisionIn = 0
     }
 

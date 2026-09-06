@@ -383,6 +383,19 @@ export class World {
     return best
   }
 
+  /** Find dry, traversable terrain so creatures can recover after terrain is painted beneath them. */
+  nearestWalkable(cx: number, cy: number, radius = 24): { x: number; y: number } | null {
+    const minX = Math.max(0, Math.floor(cx - radius)), maxX = Math.min(this.width - 1, Math.ceil(cx + radius))
+    const minY = Math.max(0, Math.floor(cy - radius)), maxY = Math.min(this.height - 1, Math.ceil(cy + radius))
+    let best: { x: number; y: number } | null = null, bestDistance = Infinity
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      if (!WALKABLE.has(this.get(x, y))) continue
+      const distance = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2
+      if (distance < bestDistance) { bestDistance = distance; best = { x, y } }
+    }
+    return best
+  }
+
   /** A small, deterministic habitat sample used by wildlife decisions. */
   habitatScore(x: number, y: number, kind: 'rabbit' | 'wolf'): number {
     if (!this.inBounds(x, y) || !WALKABLE.has(this.get(x, y))) return -Infinity
