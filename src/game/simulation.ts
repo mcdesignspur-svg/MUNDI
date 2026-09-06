@@ -2,7 +2,7 @@ import { FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Activity, type AnimalInt
 import { MAX_FIRES, type World } from './world'
 
 export const STEP = 1 / 20
-const SPEED = { human: 1.85, rabbit: 3, wolf: 3.25 }
+const SPEED = { human: 1.85, rabbit: 3.35, wolf: 2.9 }
 const METABOLISM = { human: 0.58, rabbit: 0.85, wolf: 0.95 }
 const FOOD_THRESHOLD = { human: 72, rabbit: 68, wolf: 76 }
 const RABBIT_LIMIT = 72
@@ -129,10 +129,10 @@ function decideWolf(world: World, c: Creature): void {
     const village = world.villages.reduce((nearest, candidate) => !nearest || distanceTo(c, candidate.x + 0.5, candidate.y + 0.5) < distanceTo(c, nearest.x + 0.5, nearest.y + 0.5) ? candidate : nearest, undefined as typeof world.villages[number] | undefined)
     if (village) { setAnimalGoal(c, 'migrating', 'danger', c.x + (c.x - village.x) * 3, c.y + (c.y - village.y) * 3, world.tick + 20 * 12); return }
   }
-  const nearby = world.spatial.nearby(c.x, c.y, 13)
+  const nearby = world.spatial.nearby(c.x, c.y, 10)
   const rabbits = nearby.filter(o => o.kind === 'rabbit' && o.life > 0 && wolfCanHuntRabbit(world, c, o))
   const prey = closest(c, rabbits.length ? rabbits : nearby.filter(o => o.kind === 'human' && o.life > 0 && wolfCanHuntHuman(world, c, o)))
-  if (c.energy < 89 && prey) {
+  if (c.energy < FOOD_THRESHOLD.wolf && prey) {
     const distance = Math.sqrt(distance2(c, prey))
     setAnimalGoal(c, distance > 2.2 ? 'stalking' : 'hunting', 'prey', prey.x, prey.y, world.tick + 20 * 6)
     return
@@ -238,7 +238,7 @@ export function simulate(world: World, dt = STEP): void {
       if (eaten > 0) { c.activity = 'eating'; c.vx = c.vy = 0; c.decisionIn = Math.min(c.decisionIn, 0.3) }
     }
     const targets = world.spatial.nearby(c.x, c.y, 0.9).filter(o => o.life > 0 && (
-      (c.kind === 'wolf' && c.energy < 94 && ((o.kind === 'rabbit' && wolfCanHuntRabbit(world, c, o)) || (o.kind === 'human' && wolfCanHuntHuman(world, c, o)))) ||
+      (c.kind === 'wolf' && c.energy < FOOD_THRESHOLD.wolf && (c.intent === 'stalking' || c.intent === 'hunting') && ((o.kind === 'rabbit' && wolfCanHuntRabbit(world, c, o)) || (o.kind === 'human' && wolfCanHuntHuman(world, c, o)))) ||
       (c.kind === 'human' && o.kind === 'wolf') ||
       (c.kind === 'human' && c.energy < 86 && o.kind === 'rabbit')
     ))

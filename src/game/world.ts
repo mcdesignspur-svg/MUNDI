@@ -187,7 +187,8 @@ export class World {
       vx: Math.cos(heading),
       vy: Math.sin(heading),
       life: MAX_HEALTH[kind],
-      energy: kind === 'wolf' ? 78 : kind === 'human' ? 82 : 70,
+      // Predators begin with enough reserves to roam before their first hunt.
+      energy: kind === 'wolf' ? 86 : kind === 'human' ? 82 : 70,
       // A starter population should settle before it starts growing. Rabbits
       // receive a longer first cooldown; newborns are also protected by age.
       breedCooldown: kind === 'rabbit' ? 45 + this.random.next() * 60 : 10 + this.random.next() * 9,
