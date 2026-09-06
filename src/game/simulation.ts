@@ -102,11 +102,12 @@ export function simulate(world: World, dt = STEP): void {
         : c.task === 'lumber' ? world.nearestBiome(c.x, c.y, 'forest', 22)
           : c.task === 'mining' ? world.nearestBiome(c.x, c.y, 'mountain', 26)
             : c.task === 'building' && construction ? construction : village) ?? village
-      steer(c, target.x + 0.5 - c.x, target.y + 0.5 - c.y)
-      if ((c.x - target.x) ** 2 + (c.y - target.y) ** 2 < 2) c.decisionIn = Math.min(c.decisionIn, 0.25)
+      const dx = target.x + 0.5 - c.x, dy = target.y + 0.5 - c.y
+      if (dx * dx + dy * dy < 0.12) c.vx = c.vy = 0
+      else steer(c, dx, dy)
     }
 
-    if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending'].includes(c.activity) && c.energy < 96) {
+    if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending', 'working'].includes(c.activity) && c.energy < 96) {
       const eaten = world.graze(tx, ty, (c.kind === 'rabbit' ? 5 : 3) * dt)
       c.energy = Math.min(100, c.energy + eaten * 1.25)
       if (eaten > 0) {

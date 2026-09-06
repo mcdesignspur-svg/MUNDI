@@ -247,6 +247,7 @@ export class World {
       }
       const count = (task: HumanTask) => members.filter(c => c.task === task).length
       village.food = Math.max(0, village.food - members.length * 0.22 + count('gathering') * 1.4)
+      for (const human of members) if (human.energy < 86 && village.food >= 1) { human.energy = Math.min(100, human.energy + 12); village.food -= 1 }
       village.wood += count('lumber') * 0.8
       village.stone += count('mining') * 0.48
       if (active) active.progress = Math.min(1, active.progress + count('building') * 0.045)
