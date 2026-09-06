@@ -1,4 +1,4 @@
-import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type AnimalIntent, type AnimalReason, type Building, type Creature, type DeathRecord, type HumanTask, type Village, type Weather } from './types'
+import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type AnimalIntent, type AnimalReason, type Building, type Creature, type DeathRecord, type HumanTask, type PopulationSample, type Village, type Weather, type WorldEvent } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
 
 export interface Snapshot {
@@ -20,6 +20,8 @@ export interface Snapshot {
   villages: Village[]
   buildings: Building[]
   deaths: DeathRecord[]
+  events: WorldEvent[]
+  populationHistory: PopulationSample[]
   fires: World['fires']
   meteors: World['meteors']
   rainEffects: World['rainEffects']
@@ -31,7 +33,7 @@ export function snapshot(world: World): Snapshot {
     tick: world.tick, randomState: world.random.state, nextId: world.nextId,
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
     weather: world.weather, weatherUntil: world.weatherUntil,
-    creatures: world.creatures.map(c => ({ ...c })), villages: world.villages.map(v => ({ ...v, members: [...v.members], buildingQueue: [...v.buildingQueue] })), buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), fires: world.fires.map(f => ({ ...f })),
+    creatures: world.creatures.map(c => ({ ...c })), villages: world.villages.map(v => ({ ...v, members: [...v.members], buildingQueue: [...v.buildingQueue] })), buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), events: world.events.map(e => ({ ...e })), populationHistory: world.populationHistory.map(p => ({ ...p })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
   }
 }
@@ -84,6 +86,7 @@ export function restore(input: unknown): World {
       goalX: c.goalX === undefined ? undefined : number(c.goalX, 0, WORLD_W - 0.000001),
       goalY: c.goalY === undefined ? undefined : number(c.goalY, 0, WORLD_H - 0.000001),
       goalUntil: optionalNumber(c.goalUntil, 0, 1e12, 0),
+      waterEscapeUntil: optionalNumber(c.waterEscapeUntil, 0, 1e12, 0),
       villageId: c.villageId === undefined ? undefined : number(c.villageId, 1, 1000, true),
       task: c.task === undefined ? 'idle' : choice(c.task, ['gathering', 'lumber', 'mining', 'building', 'idle'] as HumanTask[]),
       activity: choice(c.activity, Object.keys(ACTIVITY_NAMES) as Creature['activity'][]),
@@ -108,6 +111,21 @@ export function restore(input: unknown): World {
       tick: number(d.tick, 0, 1e12, true),
     }
   })
+  const events = data.events === undefined ? [] : list(data.events, 30).map(raw => {
+    const e = object(raw)
+    return {
+      id: number(e.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
+      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue'] as const),
+      x: number(e.x, 0, WORLD_W - 0.000001), y: number(e.y, 0, WORLD_H - 0.000001), tick: number(e.tick, 0, 1e12, true),
+      creature: e.creature === undefined ? undefined : choice(e.creature, ['human', 'rabbit', 'wolf'] as const),
+      cause: e.cause === undefined ? undefined : choice(e.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque'] as const),
+      count: number(e.count, 1, 999, true),
+    }
+  })
+  const populationHistory = data.populationHistory === undefined ? [] : list(data.populationHistory, 24).map(raw => {
+    const sample = object(raw)
+    return { tick: number(sample.tick, 0, 1e12, true), human: number(sample.human, 0, MAX_AGENTS, true), rabbit: number(sample.rabbit, 0, MAX_AGENTS, true), wolf: number(sample.wolf, 0, MAX_AGENTS, true) }
+  })
   const fires = list(data.fires, count).map(raw => {
     const f = object(raw)
     const x = number(f.x, 0, WORLD_W - 1, true), y = number(f.y, 0, WORLD_H - 1, true)
@@ -131,12 +149,14 @@ export function restore(input: unknown): World {
   world.villages = villages
   world.buildings = buildings
   world.deaths = deaths
+  world.events = events
+  world.populationHistory = populationHistory
   world.fires = fires
   world.meteors = effects(data.meteors, 64, 1, 32)
   world.rainEffects = effects(data.rainEffects, 12, 2, 16)
   world.tick = number(data.tick, 0, 1e12, true)
   world.random.state = number(data.randomState, 0, 0xffffffff, true)
-  world.nextId = number(data.nextId, Math.max(0, ...ids) + 1, Number.MAX_SAFE_INTEGER, true)
+  world.nextId = number(data.nextId, Math.max(0, ...ids, ...events.map(e => e.id)) + 1, Number.MAX_SAFE_INTEGER, true)
   world.recount()
   world.spatial.rebuild(world.creatures)
   return world

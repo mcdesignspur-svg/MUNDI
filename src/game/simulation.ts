@@ -48,6 +48,11 @@ function setAnimalGoal(c: Creature, intent: AnimalIntent, reason: AnimalReason, 
 }
 
 function clearAnimalGoal(c: Creature): void { setAnimalGoal(c, 'none', 'none') }
+function beginMigration(world: World, c: Creature, reason: AnimalReason, x: number, y: number, until: number): void {
+  const alreadyHeadingThere = c.intent === 'migrating' && c.intentReason === reason && c.goalX !== undefined && c.goalY !== undefined && distanceTo(c, c.goalX, c.goalY) < 3
+  setAnimalGoal(c, 'migrating', reason, x, y, until)
+  if (!alreadyHeadingThere) world.recordEvent('migration', c.x, c.y, c.kind)
+}
 function goalActive(world: World, c: Creature): boolean {
   return c.goalX !== undefined && c.goalY !== undefined && (c.goalUntil ?? 0) > world.tick && distanceTo(c, c.goalX, c.goalY) > 1.25
 }
@@ -98,7 +103,7 @@ function decideRabbit(world: World, c: Creature): void {
   if (rabbitHabitatPoor(world, c)) {
     const habitat = world.bestHabitat(c.x, c.y, 'rabbit')
     if (habitat && habitat.score > world.habitatScore(Math.floor(c.x), Math.floor(c.y), 'rabbit') + 12) {
-      setAnimalGoal(c, 'migrating', 'habitat', habitat.x + 0.5, habitat.y + 0.5, world.tick + 20 * 42)
+      beginMigration(world, c, 'habitat', habitat.x + 0.5, habitat.y + 0.5, world.tick + 20 * 42)
       return
     }
   }
@@ -127,7 +132,7 @@ function decideWolf(world: World, c: Creature): void {
   }
   if (villageDistance < VILLAGE_SAFE_RADIUS) {
     const village = world.villages.reduce((nearest, candidate) => !nearest || distanceTo(c, candidate.x + 0.5, candidate.y + 0.5) < distanceTo(c, nearest.x + 0.5, nearest.y + 0.5) ? candidate : nearest, undefined as typeof world.villages[number] | undefined)
-    if (village) { setAnimalGoal(c, 'migrating', 'danger', c.x + (c.x - village.x) * 3, c.y + (c.y - village.y) * 3, world.tick + 20 * 12); return }
+    if (village) { beginMigration(world, c, 'danger', c.x + (c.x - village.x) * 3, c.y + (c.y - village.y) * 3, world.tick + 20 * 12); return }
   }
   const nearby = world.spatial.nearby(c.x, c.y, 10)
   const rabbits = nearby.filter(o => o.kind === 'rabbit' && o.life > 0 && wolfCanHuntRabbit(world, c, o))
@@ -145,7 +150,7 @@ function decideWolf(world: World, c: Creature): void {
   const habitat = world.bestHabitat(c.x, c.y, 'wolf')
   const here = world.habitatScore(Math.floor(c.x), Math.floor(c.y), 'wolf')
   if (habitat && habitat.score > here + 16) {
-    setAnimalGoal(c, 'migrating', 'prey', habitat.x + 0.5, habitat.y + 0.5, world.tick + 20 * 38)
+    beginMigration(world, c, 'prey', habitat.x + 0.5, habitat.y + 0.5, world.tick + 20 * 38)
     return
   }
   if (c.energy > 90 && world.random.next() < 0.16) {
@@ -219,6 +224,10 @@ export function simulate(world: World, dt = STEP): void {
     if (stranded) {
       const shore = world.nearestWalkable(c.x, c.y)
       if (shore) {
+        if ((c.waterEscapeUntil ?? 0) <= world.tick) {
+          world.recordEvent('rescue', c.x, c.y, c.kind)
+          c.waterEscapeUntil = world.tick + 20 * 20
+        }
         if (c.kind === 'human') { c.activity = 'fleeing'; steer(c, shore.x + 0.5 - c.x, shore.y + 0.5 - c.y) }
         else setAnimalGoal(c, 'fleeing', 'water', shore.x + 0.5, shore.y + 0.5, world.tick + 20 * 20)
         c.decisionIn = Math.max(c.decisionIn, 0.5)
@@ -262,7 +271,7 @@ export function simulate(world: World, dt = STEP): void {
       c.vx = c.vy = 0
       const fatal = damage(target, c.kind === 'wolf' ? (target.kind === 'human' ? 7 : 10) : (target.kind === 'wolf' ? 8 : 6))
       c.attackCooldown = c.kind === 'wolf' ? 0.72 : 0.82
-      if (fatal) { world.recordDeath(target, 'ataque'); c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24)); c.activity = 'eating'; c.decisionIn = Math.min(c.decisionIn, 0.35) }
+      if (fatal) { world.recordEvent('hunt', target.x, target.y, target.kind); world.recordDeath(target, 'ataque'); c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24)); c.activity = 'eating'; c.decisionIn = Math.min(c.decisionIn, 0.35) }
     }
 
     if (!engaged && c.activity !== 'eating' && c.activity !== 'resting') {
@@ -284,7 +293,9 @@ export function simulate(world: World, dt = STEP): void {
     }
   }
   world.creatures = world.creatures.filter(c => c.life > 0)
-  for (const birth of births) world.spawn('rabbit', birth.x, birth.y)
+  for (const birth of births) {
+    if (world.spawn('rabbit', birth.x, birth.y)) world.recordEvent('birth', birth.x + 0.5, birth.y + 0.5, 'rabbit')
+  }
   if (world.tick % 20 === 0) {
     const next: typeof world.fires = []
     for (const fire of world.fires) {
@@ -310,5 +321,6 @@ export function simulate(world: World, dt = STEP): void {
   for (const rain of world.rainEffects) rain.age += dt
   world.rainEffects = world.rainEffects.filter(r => r.age < 2)
   world.recount()
+  world.capturePopulationHistory()
   world.spatial.rebuild(world.creatures)
 }

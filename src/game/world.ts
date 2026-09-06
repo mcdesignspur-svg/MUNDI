@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Building, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type Season, type Village, type Weather } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Building, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
 
@@ -57,6 +57,8 @@ export class World {
   villages: Village[] = []
   buildings: Building[] = []
   deaths: DeathRecord[] = []
+  events: WorldEvent[] = []
+  populationHistory: PopulationSample[] = []
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
   nextId = 1
@@ -144,6 +146,8 @@ export class World {
     this.villages = []
     this.buildings = []
     this.deaths = []
+    this.events = []
+    this.populationHistory = []
     this.fires = []
     this.meteors = []
     this.nextId = 1
@@ -202,6 +206,7 @@ export class World {
       intent: 'none',
       intentReason: 'none',
       goalUntil: 0,
+      waterEscapeUntil: 0,
       task: kind === 'human' ? 'idle' : undefined,
     }
     this.creatures.push(c)
@@ -213,7 +218,32 @@ export class World {
   recordDeath(creature: Creature, cause: DeathCause): void {
     this.deaths.unshift({ id: creature.id, kind: creature.kind, x: creature.x, y: creature.y, cause, tick: this.tick })
     if (this.deaths.length > 12) this.deaths.length = 12
+    this.recordEvent('death', creature.x, creature.y, creature.kind, cause)
     this.revision++
+  }
+
+  recordEvent(kind: WorldEventKind, x: number, y: number, creature?: CreatureKind, cause?: DeathCause): void {
+    const latest = this.events[0]
+    // Repeated nearby events of the same kind become one readable item.
+    if (latest && latest.kind === kind && latest.creature === creature && latest.cause === cause && this.tick - latest.tick < 20 * 12 && (latest.x - x) ** 2 + (latest.y - y) ** 2 < 64) {
+      latest.count++
+      latest.tick = this.tick
+    } else {
+      this.events.unshift({ id: this.nextId++, kind, x, y, tick: this.tick, creature, cause, count: 1 })
+      if (this.events.length > 30) this.events.length = 30
+    }
+    this.revision++
+  }
+
+  capturePopulationHistory(): void {
+    if (this.tick % 100 !== 0) return
+    this.populationHistory.push({ tick: this.tick, ...this.population })
+    if (this.populationHistory.length > 24) this.populationHistory.shift()
+  }
+
+  populationTrend(kind: CreatureKind): number {
+    if (this.populationHistory.length < 2) return 0
+    return this.populationHistory[this.populationHistory.length - 1]![kind] - this.populationHistory[0]![kind]
   }
 
   buildingAt(x: number, y: number): Building | undefined { return this.buildings.find(b => b.x === x && b.y === y) }
@@ -485,6 +515,7 @@ export class World {
   }
 
   ignite(cx: number, cy: number, radius = 1): void {
+    let ignited = false
     for (let y = cy - radius; y <= cy + radius; y++) {
       for (let x = cx - radius; x <= cx + radius; x++) {
         if (!this.inBounds(x, y)) continue
@@ -493,11 +524,13 @@ export class World {
           if (!this.fires.some((f) => f.x === x && f.y === y)) {
             if (this.fires.length >= MAX_FIRES) return
             this.fires.push({ x, y, heat: 1 })
+            ignited = true
             this.revision++
           }
         }
       }
     }
+    if (ignited) this.recordEvent('fire', cx + 0.5, cy + 0.5)
   }
 
   rain(cx: number, cy: number, radius = 4): void {

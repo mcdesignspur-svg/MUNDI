@@ -16,6 +16,7 @@ export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
 export type Weather = 'clear' | 'rain' | 'drought'
 export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'hazards'
 export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque'
+export type WorldEventKind = 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue'
 export type HumanTask = 'gathering' | 'lumber' | 'mining' | 'building' | 'idle'
 export type BuildingType = 'home' | 'storehouse' | 'farm' | 'sawmill'
 
@@ -30,6 +31,19 @@ export interface DeathRecord {
   cause: DeathCause
   tick: number
 }
+
+export interface WorldEvent {
+  id: number
+  kind: WorldEventKind
+  x: number
+  y: number
+  tick: number
+  creature?: CreatureKind
+  cause?: DeathCause
+  count: number
+}
+
+export interface PopulationSample { tick: number; human: number; rabbit: number; wolf: number }
 
 export type ToolId =
   | 'inspect'
@@ -70,6 +84,7 @@ export interface Creature {
   goalX?: number
   goalY?: number
   goalUntil?: number
+  waterEscapeUntil?: number
   villageId?: number
   task?: HumanTask
 }
@@ -87,6 +102,9 @@ export const MAX_HEALTH: Record<CreatureKind, number> = { human: 50, rabbit: 20,
 export const MAX_AGE: Record<CreatureKind, number> = { human: 1300, rabbit: 520, wolf: 1000 }
 export const DEATH_CAUSE_NAMES: Record<DeathCause, string> = {
   hambruna: 'Murió de hambre', vejez: 'Murió de vejez', fuego: 'Murió en un incendio', lava: 'Murió por la lava', ataque: 'Murió en un ataque',
+}
+export const WORLD_EVENT_NAMES: Record<WorldEventKind, string> = {
+  birth: 'Nacimiento', hunt: 'Cacería', death: 'Pérdida', migration: 'Migración', fire: 'Incendio', rescue: 'Salida del agua',
 }
 export const SEASON_NAMES: Record<Season, string> = { spring: 'Primavera', summer: 'Verano', autumn: 'Otoño', winter: 'Invierno' }
 export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía' }

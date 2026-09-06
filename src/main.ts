@@ -75,6 +75,7 @@ app.innerHTML = `
       <button id="btn-recenter" class="icon-button" aria-label="Ver el mundo completo" title="Ver el mundo completo">${icon('center')}</button>
       <button id="btn-zoom-out" class="icon-button" aria-label="Alejar mapa">−</button>
       <button id="btn-layers" class="icon-button" aria-label="Mostrar capas del mapa" aria-expanded="false" aria-controls="layers-panel">${icon('layers')}</button>
+      <button id="btn-events" class="icon-button" aria-label="Mostrar acontecimientos" aria-expanded="false" aria-controls="events-panel">☷</button>
     </div>
     <div id="layers-panel" class="layers-panel" aria-label="Capas del mapa" hidden>
       <span class="eyebrow">Capas del mapa</span>
@@ -84,6 +85,11 @@ app.innerHTML = `
       <button data-overlay="fertility" aria-pressed="false"><i class="layer-swatch fertility"></i>Fertilidad</button>
       <button data-overlay="hazards" aria-pressed="false"><i class="layer-swatch hazards"></i>Peligros</button>
     </div>
+    <section id="events-panel" class="events-panel" aria-label="Acontecimientos del mundo" hidden>
+      <div class="event-heading"><span class="eyebrow">Pulso del mundo</span><span id="event-count" class="event-count"></span></div>
+      <div id="ecosystem-stats" class="ecosystem-stats"></div>
+      <div id="event-list" class="event-list"></div>
+    </section>
     <div class="map-caption"><span id="world-summary"></span><span class="desktop-hint">Rueda: zoom · Espacio + arrastrar: mover</span></div>
     <div class="loading" id="loading"><strong>Despertando el mundo</strong><span>Preparando el paisaje y sus habitantes…</span></div>
   </main>
@@ -186,6 +192,27 @@ function focusHabitat(): void {
   camera.centerOn(48 * TILE, 48 * TILE)
   camera.zoom = camera.viewW < 600 ? 0.8 : 1.05
 }
+function trendText(kind: 'human' | 'rabbit' | 'wolf'): string {
+  const trend = world.populationTrend(kind)
+  return trend > 0 ? '↑ +' + trend : trend < 0 ? '↓ ' + trend : '→ 0'
+}
+function eventText(event: typeof world.events[number]): string {
+  const creature = event.creature ? KIND_NAMES[event.creature].toLowerCase() : ''
+  const amount = event.count > 1 ? ' ×' + event.count : ''
+  if (event.kind === 'birth') return 'Nació un ' + creature + amount
+  if (event.kind === 'hunt') return 'Cacería: cayó un ' + creature + amount
+  if (event.kind === 'death') return (event.cause ? DEATH_CAUSE_NAMES[event.cause] : 'Una criatura murió') + amount
+  if (event.kind === 'migration') return 'Migración de ' + creature + amount
+  if (event.kind === 'fire') return 'Incendio iniciado' + amount
+  return creature ? 'Un ' + creature + ' encontró tierra firme' + amount : 'Una criatura encontró tierra firme' + amount
+}
+function refreshEvents(): void {
+  $('event-count').textContent = world.events.length ? String(world.events.length) + ' recientes' : 'Sin sucesos'
+  $('ecosystem-stats').innerHTML = (['human', 'rabbit', 'wolf'] as const).map(kind => `<span><i class="population-dot ${kind}"></i>${KIND_NAMES[kind]} <strong>${world.population[kind]}</strong><b>${trendText(kind)}</b></span>`).join('')
+  $('event-list').innerHTML = world.events.length
+    ? world.events.map(event => `<button class="event-item" data-event="${event.id}" title="Ver ubicación"><span>${eventText(event)}</span><small>hace ${Math.max(0, Math.floor((world.tick - event.tick) / 20))} min</small></button>`).join('')
+    : '<p class="event-empty">El mundo aún no ha registrado acontecimientos.</p>'
+}
 function refresh(): void {
   $('world-name').textContent = world.seed
   $('world-time').textContent = worldTime(world.tick)
@@ -199,6 +226,7 @@ function refresh(): void {
     const selected = Number(btn.dataset.speed) === state.speed
     btn.classList.toggle('active', selected); btn.setAttribute('aria-pressed', String(selected))
   })
+  refreshEvents()
   updateInspector()
 }
 function updateInspector(): void {
@@ -296,8 +324,30 @@ $('btn-zoom-out').addEventListener('click', () => camera.zoomAt(camera.viewW / 2
 $('btn-layers').addEventListener('click', () => {
   const panel = $('layers-panel')
   panel.hidden = !panel.hidden
+  $('events-panel').hidden = true
   $('btn-layers').setAttribute('aria-expanded', String(!panel.hidden))
   $('btn-layers').setAttribute('aria-label', panel.hidden ? 'Mostrar capas del mapa' : 'Ocultar capas del mapa')
+  $('btn-events').setAttribute('aria-expanded', 'false')
+})
+$('btn-events').addEventListener('click', () => {
+  const panel = $('events-panel')
+  panel.hidden = !panel.hidden
+  $('layers-panel').hidden = true
+  $('btn-events').setAttribute('aria-expanded', String(!panel.hidden))
+  $('btn-events').setAttribute('aria-label', panel.hidden ? 'Mostrar acontecimientos' : 'Ocultar acontecimientos')
+  $('btn-layers').setAttribute('aria-expanded', 'false')
+})
+$('event-list').addEventListener('click', event => {
+  const button = (event.target as Element).closest<HTMLButtonElement>('[data-event]')
+  if (!button) return
+  const item = world.events.find(item => item.id === Number(button.dataset.event))
+  if (!item) return
+  state.selection = { kind: 'tile', x: Math.floor(item.x), y: Math.floor(item.y) }
+  following = false
+  camera.centerOn(item.x * TILE, item.y * TILE)
+  $('events-panel').hidden = true
+  $('btn-events').setAttribute('aria-expanded', 'false')
+  refresh()
 })
 document.querySelectorAll<HTMLButtonElement>('[data-overlay]').forEach(button => button.addEventListener('click', () => {
   state.overlay = button.dataset.overlay as Overlay
