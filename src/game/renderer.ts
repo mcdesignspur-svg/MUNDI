@@ -224,6 +224,14 @@ export class Renderer {
         }
         this.sprite(ctx, row * 4 + frame, px, py, size, c.vx < 0)
         if (state.selection?.kind === 'creature' && state.selection.id === c.id) {
+          if (c.kind !== 'human' && c.goalX !== undefined && c.goalY !== undefined && (c.goalUntil ?? 0) > world.tick) {
+            const goalColor = c.intent === 'migrating' ? '#8bd68c' : c.intent === 'stalking' || c.intent === 'hunting' ? '#dd8a74' : '#f1cf80'
+            ctx.save()
+            ctx.strokeStyle = goalColor + 'aa'; ctx.lineWidth = 1 / camera.zoom; ctx.setLineDash([3 / camera.zoom, 3 / camera.zoom])
+            ctx.beginPath(); ctx.moveTo(px, py - size * 0.45); ctx.lineTo(c.goalX * TILE, c.goalY * TILE); ctx.stroke()
+            ctx.setLineDash([]); ctx.strokeStyle = goalColor; ctx.beginPath(); ctx.arc(c.goalX * TILE, c.goalY * TILE, 4 / camera.zoom, 0, Math.PI * 2); ctx.stroke()
+            ctx.restore()
+          }
           ctx.strokeStyle = '#f1cf80'; ctx.lineWidth = 1.5 / camera.zoom
           ctx.strokeRect(px - 12, py - size, 24, size + 3)
         }

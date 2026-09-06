@@ -1,4 +1,4 @@
-import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type Building, type Creature, type DeathRecord, type HumanTask, type Village, type Weather } from './types'
+import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type AnimalIntent, type AnimalReason, type Building, type Creature, type DeathRecord, type HumanTask, type Village, type Weather } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
 
 export interface Snapshot {
@@ -72,12 +72,18 @@ export function restore(input: unknown): World {
     const id = number(c.id, 1, Number.MAX_SAFE_INTEGER - 1, true)
     if (ids.has(id)) throw new Error('La partida contiene seres duplicados.')
     ids.add(id)
+    const intent = c.intent === undefined ? 'none' : choice(c.intent, ['none', 'foraging', 'sheltering', 'migrating', 'fleeing', 'resting', 'stalking', 'hunting'] as AnimalIntent[])
+    const intentReason = c.intentReason === undefined ? 'none' : choice(c.intentReason, ['none', 'danger', 'fire', 'food', 'habitat', 'prey', 'rest'] as AnimalReason[])
     return {
       id, kind, x: number(c.x, 0, WORLD_W - 0.000001), y: number(c.y, 0, WORLD_H - 0.000001),
       vx: number(c.vx, -1, 1), vy: number(c.vy, -1, 1), life: number(c.life, 0, MAX_HEALTH[kind]),
       energy: number(c.energy, -100, 100), age: number(c.age, 0, 1e12),
       breedCooldown: number(c.breedCooldown, 0, 1e6), decisionIn: number(c.decisionIn, -1, 2),
       hurt: optionalNumber(c.hurt, 0, 1), attackCooldown: optionalNumber(c.attackCooldown, 0, 2),
+      intent, intentReason,
+      goalX: c.goalX === undefined ? undefined : number(c.goalX, 0, WORLD_W - 0.000001),
+      goalY: c.goalY === undefined ? undefined : number(c.goalY, 0, WORLD_H - 0.000001),
+      goalUntil: optionalNumber(c.goalUntil, 0, 1e12, 0),
       villageId: c.villageId === undefined ? undefined : number(c.villageId, 1, 1000, true),
       task: c.task === undefined ? 'idle' : choice(c.task, ['gathering', 'lumber', 'mining', 'building', 'idle'] as HumanTask[]),
       activity: choice(c.activity, Object.keys(ACTIVITY_NAMES) as Creature['activity'][]),

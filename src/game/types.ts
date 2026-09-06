@@ -10,6 +10,8 @@ export type Biome =
   | 'lava'
 
 export type CreatureKind = 'human' | 'rabbit' | 'wolf'
+export type AnimalIntent = 'none' | 'foraging' | 'sheltering' | 'migrating' | 'fleeing' | 'resting' | 'stalking' | 'hunting'
+export type AnimalReason = 'none' | 'danger' | 'fire' | 'food' | 'habitat' | 'prey' | 'rest'
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
 export type Weather = 'clear' | 'rain' | 'drought'
 export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'hazards'
@@ -62,11 +64,17 @@ export interface Creature {
   /** Seconds of the red impact flash still visible. */
   hurt: number
   attackCooldown: number
+  /** Persisted wildlife decision, also used by the inspector to explain movement. */
+  intent?: AnimalIntent
+  intentReason?: AnimalReason
+  goalX?: number
+  goalY?: number
+  goalUntil?: number
   villageId?: number
   task?: HumanTask
 }
 
-export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'defending' | 'fleeing' | 'resting' | 'working'
+export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'stalking' | 'defending' | 'fleeing' | 'sheltering' | 'migrating' | 'resting' | 'working'
 export type Selection = { kind: 'creature'; id: number } | { kind: 'tile'; x: number; y: number } | null
 export type GameCommand =
   | { type: 'apply'; tool: ToolId; x: number; y: number; radius: number }
@@ -85,7 +93,10 @@ export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable',
 export const OVERLAY_NAMES: Record<Overlay, string> = { none: 'Normal', food: 'Alimento', moisture: 'Humedad', fertility: 'Fertilidad', hazards: 'Peligros' }
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
-  hunting: 'Cazando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', resting: 'Descansando', working: 'Trabajando',
+  hunting: 'Cazando', stalking: 'Acechando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', sheltering: 'Buscando refugio', migrating: 'Migrando', resting: 'Descansando', working: 'Trabajando',
+}
+export const ANIMAL_REASON_NAMES: Record<AnimalReason, string> = {
+  none: '', danger: 'peligro cercano', fire: 'fuego o lava', food: 'busca alimento', habitat: 'hábitat agotado', prey: 'busca presas', rest: 'necesita descansar',
 }
 export const TASK_NAMES: Record<HumanTask, string> = { gathering: 'Recolectando alimento', lumber: 'Cortando madera', mining: 'Extrayendo piedra', building: 'Construyendo', idle: 'Sin tarea' }
 export const BUILDING_NAMES: Record<BuildingType, string> = { home: 'Vivienda', storehouse: 'Almacén', farm: 'Granja', sawmill: 'Aserradero' }

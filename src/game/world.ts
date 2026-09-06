@@ -198,6 +198,9 @@ export class World {
       decisionIn: 0.15 + this.random.next() * 0.35,
       hurt: 0,
       attackCooldown: 0,
+      intent: 'none',
+      intentReason: 'none',
+      goalUntil: 0,
       task: kind === 'human' ? 'idle' : undefined,
     }
     this.creatures.push(c)
@@ -377,6 +380,46 @@ export class World {
       if (distance < bestDistance) { bestDistance = distance; best = { x, y } }
     }
     return best
+  }
+
+  /** A small, deterministic habitat sample used by wildlife decisions. */
+  habitatScore(x: number, y: number, kind: 'rabbit' | 'wolf'): number {
+    if (!this.inBounds(x, y) || !WALKABLE.has(this.get(x, y))) return -Infinity
+    const biome = this.get(x, y)
+    const vegetation = this.vegetationAt(x, y)
+    const moisture = this.moistureAt(x, y)
+    const fertility = this.fertilityAt(x, y)
+    const fireNear = this.fires.some(f => (f.x - x) ** 2 + (f.y - y) ** 2 < 25)
+    if (fireNear || biome === 'lava') return -Infinity
+    if (kind === 'rabbit') {
+      const cover = biome === 'forest' ? 30 : biome === 'grass' ? 10 : 0
+      return vegetation * 0.75 + moisture * 0.22 + fertility * 0.16 + cover
+    }
+    const prey = this.spatial.nearby(x + 0.5, y + 0.5, 7).filter(c => c.kind === 'rabbit' && c.life > 0).length
+    const nearestVillage = this.nearestVillageDistance(x, y)
+    // Wolves can roam through wilderness, but the village radius is expensive
+    // unless hunger later overrides it in the simulation.
+    return prey * 28 + moisture * 0.08 + fertility * 0.04 - Math.max(0, 13 - nearestVillage) * 9
+  }
+
+  /** Select from a bounded ring of samples, not a full map scan. */
+  bestHabitat(cx: number, cy: number, kind: 'rabbit' | 'wolf', radius = 24): { x: number; y: number; score: number } | null {
+    let best: { x: number; y: number; score: number } | null = null
+    const stride = 4
+    for (let y = Math.max(0, Math.floor(cy - radius)); y <= Math.min(this.height - 1, Math.ceil(cy + radius)); y += stride) {
+      for (let x = Math.max(0, Math.floor(cx - radius)); x <= Math.min(this.width - 1, Math.ceil(cx + radius)); x += stride) {
+        const distance = Math.hypot(x + 0.5 - cx, y + 0.5 - cy)
+        if (distance < 5 || distance > radius) continue
+        const score = this.habitatScore(x, y, kind) - distance * 0.42
+        if (!best || score > best.score) best = { x, y, score }
+      }
+    }
+    return best
+  }
+
+  nearestVillageDistance(x: number, y: number): number {
+    if (!this.villages.length) return Infinity
+    return Math.min(...this.villages.map(v => Math.hypot(v.x + 0.5 - x, v.y + 0.5 - y)))
   }
 
   regrowNature(): void {
