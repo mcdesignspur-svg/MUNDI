@@ -21,6 +21,8 @@ Abre la URL de Vite (por defecto `http://localhost:5173`).
 - **Sucesión de biomas** — sequía → arena, frío → nieve, humedad + calor → bosque
 - **Cosecha real** — los aldeanos van a talar, minar, recolectar bayas, cazar y pescar; el stock solo sube al actuar
 - **Conocimiento y tecnología** — la aldea desbloquea saberes (caza, carpintería…) y tech (herramientas, granja…) al cumplir requisitos
+- **Varias aldeas** — grupos lejanos fundan asentamientos propios; aldeas grandes pueden emigrar
+- **Conflictos emergentes** — la escasez y la proximidad suben la hostilidad; guerras e incursiones solo si la tensión crece sola
 
 ## Controles
 

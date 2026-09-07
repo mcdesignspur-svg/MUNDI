@@ -97,6 +97,18 @@ function thermalStress(world: World, c: Creature): DeathCause | null {
 }
 
 function villagerTarget(world: World, c: Creature, village: Village): { x: number; y: number } {
+  if (c.task === 'raiding') {
+    const enemies = world.enemyVillages(village)
+    const foe = closest(c, world.spatial.nearby(c.x, c.y, 16).filter(o =>
+      o.kind === 'human' && o.life > 0 && o.villageId && o.villageId !== village.id && world.isAtWar(village, o.villageId)))
+    if (foe) return { x: foe.x - 0.5, y: foe.y - 0.5 }
+    const camp = enemies.reduce((best, e) => {
+      const d = Math.hypot(e.x - c.x, e.y - c.y)
+      return !best || d < best.d ? { e, d } : best
+    }, null as { e: Village; d: number } | null)
+    if (camp) return camp.e
+    return village
+  }
   const construction = world.buildings.find(b => b.villageId === village.id && b.progress < 1)
   if (c.task === 'building' && construction) return construction
   if (c.task === 'foraging') return world.nearestBerry(c.x, c.y, 20) ?? world.nearestFood(c.x, c.y, 18) ?? village
@@ -162,6 +174,10 @@ function harvestAtSite(world: World, c: Creature, village: Village, dt: number):
     c.activity = 'working'
     c.vx = c.vy = 0
     return true
+  }
+  if (c.task === 'raiding') {
+    c.activity = 'raiding'
+    return false
   }
   return false
 }
@@ -279,10 +295,23 @@ function decideHuman(world: World, c: Creature): void {
   c.activity = 'exploring'
   const nearby = world.spatial.nearby(c.x, c.y, 7)
   const phase = world.dayPhase()
+  const home = c.villageId
+    ? world.villages.find(v => v.id === c.villageId)
+    : world.villages.reduce((nearest, candidate) => !nearest || Math.hypot(candidate.x + 0.5 - c.x, candidate.y + 0.5 - c.y) < Math.hypot(nearest.x + 0.5 - c.x, nearest.y + 0.5 - c.y) ? candidate : nearest, undefined as Village | undefined)
   if ((phase === 'night' || phase === 'dusk') && c.energy > 55 && world.random.next() < 0.4) {
-    const village = world.villages[0]
-    if (village) { c.activity = 'resting'; steer(c, village.x + 0.5 - c.x, village.y + 0.5 - c.y); return }
+    if (home) { c.activity = 'resting'; steer(c, home.x + 0.5 - c.x, home.y + 0.5 - c.y); return }
     c.activity = 'resting'; c.vx = c.vy = 0; c.decisionIn = 0.8; return
+  }
+  // Flee raiders from hostile villages when not already fighting.
+  if (c.villageId && c.task !== 'raiding') {
+    const raider = closest(c, nearby.filter(o =>
+      o.kind === 'human' && o.life > 0 && o.villageId && o.villageId !== c.villageId && o.task === 'raiding'
+      && home && world.isAtWar(home, o.villageId)))
+    if (raider && distance2(c, raider) < 9) {
+      c.activity = 'fleeing'
+      steer(c, c.x - raider.x, c.y - raider.y)
+      return
+    }
   }
   if (c.energy < FOOD_THRESHOLD.human) {
     const prey = closest(c, nearby.filter(o => o.kind === 'rabbit'))
@@ -368,19 +397,27 @@ export function simulate(world: World, dt = STEP): void {
 
     const village = c.kind === 'human' && c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
     let harvesting = false
-    if (village) {
-      c.activity = 'working'
+    if (village && (c.task === 'raiding' || c.activity !== 'fleeing')) {
+      if (c.task === 'raiding') c.activity = 'raiding'
+      else c.activity = 'working'
+      // Sharing a patch with another village slowly raises tension.
+      if (c.task === 'foraging' || c.task === 'lumber' || c.task === 'mining' || c.task === 'fishing') {
+        for (const other of world.spatial.nearby(c.x, c.y, 1.5)) {
+          if (other.kind !== 'human' || !other.villageId || other.villageId === village.id || other.life <= 0) continue
+          const rival = world.villages.find(v => v.id === other.villageId)
+          if (rival) world.noteResourceFriction(village, rival)
+        }
+      }
       const target = villagerTarget(world, c, village)
       c.goalX = target.x + 0.5
       c.goalY = target.y + 0.5
       const dx = c.goalX - c.x, dy = c.goalY - c.y
-      const arrived = dx * dx + dy * dy < (c.task === 'hunting' ? 0.85 : 0.35)
+      const arrived = dx * dx + dy * dy < (c.task === 'hunting' || c.task === 'raiding' ? 0.85 : 0.35)
       if (arrived) {
         c.vx = c.vy = 0
         harvesting = harvestAtSite(world, c, village, dt)
-        if (!harvesting && c.task === 'hunting') {
-          // Stay ready to strike; combat block below handles the kill.
-          c.activity = 'hunting'
+        if (!harvesting && (c.task === 'hunting' || c.task === 'raiding')) {
+          c.activity = c.task === 'raiding' ? 'raiding' : 'hunting'
         } else if (!harvesting) {
           c.workTimer = 0
           c.decisionIn = 0
@@ -391,43 +428,70 @@ export function simulate(world: World, dt = STEP): void {
       }
     }
 
-    if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending', 'working'].includes(c.activity) && c.energy < 96) {
+    if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending', 'working', 'raiding'].includes(c.activity) && c.energy < 96) {
       const eaten = world.graze(tx, ty, (c.kind === 'rabbit' ? 5 : 3) * dt)
       c.energy = Math.min(100, c.energy + eaten * 1.25)
       if (eaten > 0) { c.activity = 'eating'; c.vx = c.vy = 0; c.decisionIn = Math.min(c.decisionIn, 0.3) }
     }
     const villageForHunt = village
+    const hostileHuman = (o: Creature) => {
+      if (c.kind !== 'human' || o.kind !== 'human' || !c.villageId || !o.villageId || o.villageId === c.villageId || !villageForHunt) return false
+      const hostility = world.hostility(villageForHunt, o.villageId)
+      if (c.task === 'raiding' && hostility >= 55) return true
+      // Opportunistic skirmish when relations are already bad and they bump into each other.
+      return hostility >= 45 && distance2(c, o) < 0.55
+    }
     const targets = world.spatial.nearby(c.x, c.y, 0.9).filter(o => o.life > 0 && (
       (c.kind === 'wolf' && c.energy < FOOD_THRESHOLD.wolf && (c.intent === 'stalking' || c.intent === 'hunting') && ((o.kind === 'rabbit' && wolfCanHuntRabbit(world, c, o)) || (o.kind === 'human' && wolfCanHuntHuman(world, c, o)))) ||
       (c.kind === 'human' && o.kind === 'wolf') ||
-      (c.kind === 'human' && o.kind === 'rabbit' && (c.energy < 86 || c.task === 'hunting'))
+      (c.kind === 'human' && o.kind === 'rabbit' && (c.energy < 86 || c.task === 'hunting')) ||
+      hostileHuman(o)
     ))
     const target = closest(c, targets)
     let engaged = false
     if (target && c.attackCooldown === 0) {
       engaged = true
       const defending = c.kind === 'human' && target.kind === 'wolf'
-      c.activity = defending ? 'defending' : 'hunting'
+      const raiding = c.kind === 'human' && target.kind === 'human'
+      c.activity = defending ? 'defending' : raiding ? 'raiding' : 'hunting'
       c.vx = c.vy = 0
-      const humanStrike = c.kind === 'human' ? huntDamage(villageForHunt) : (target.kind === 'wolf' ? 8 : 6)
+      const humanStrike = c.kind === 'human' ? huntDamage(villageForHunt) * (raiding ? 0.85 : 1) : (target.kind === 'wolf' ? 8 : 6)
       const fatal = damage(target, c.kind === 'wolf' ? (target.kind === 'human' ? 7 : 10) : humanStrike)
       c.attackCooldown = c.kind === 'wolf' ? 0.72 : 0.82
       if (fatal) {
-        world.recordEvent('hunt', target.x, target.y, target.kind)
-        world.recordDeath(target, 'ataque')
-        c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24))
-        c.activity = 'eating'
+        if (raiding && villageForHunt && target.villageId) {
+          const victimVillage = world.villages.find(v => v.id === target.villageId)
+          if (victimVillage) {
+            const lootFood = Math.min(8, victimVillage.food)
+            const lootWood = Math.min(3, victimVillage.wood)
+            victimVillage.food -= lootFood
+            victimVillage.wood -= lootWood
+            villageForHunt.food += lootFood
+            villageForHunt.wood += lootWood
+            world.bumpHostility(villageForHunt, victimVillage, 4)
+            world.recordEvent('raid', target.x, target.y, 'human', undefined, `${villageForHunt.name} → ${victimVillage.name}`)
+          }
+          world.recordDeath(target, 'ataque')
+        } else {
+          world.recordEvent('hunt', target.x, target.y, target.kind)
+          world.recordDeath(target, 'ataque')
+        }
+        c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : raiding ? 14 : 24))
+        c.activity = raiding ? 'raiding' : 'eating'
         c.decisionIn = Math.min(c.decisionIn, 0.35)
         if (c.kind === 'human' && villageForHunt && target.kind === 'rabbit') {
           villageForHunt.food += huntFoodYield(villageForHunt)
           villageForHunt.progress.hunts++
         }
+      } else if (raiding && villageForHunt && target.villageId) {
+        const victimVillage = world.villages.find(v => v.id === target.villageId)
+        if (victimVillage) world.bumpHostility(villageForHunt, victimVillage, 0.6)
       }
     }
 
     if (!engaged && !harvesting && c.activity !== 'eating' && c.activity !== 'resting') {
       const nightSlow = world.dayPhase() === 'night' && c.kind === 'rabbit' ? 0.72 : world.dayPhase() === 'night' && c.kind === 'wolf' ? 1.18 : 1
-      const speed = SPEED[c.kind] * dt * nightSlow * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : 1)
+      const speed = SPEED[c.kind] * dt * nightSlow * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : c.activity === 'raiding' ? 1.12 : 1)
       const nx = c.x + c.vx * speed, ny = c.y + c.vy * speed
       // A stranded creature may cross a few water cells only while following
       // its emergency shore route; ordinary navigation still never enters water.

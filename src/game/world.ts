@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, emptyProgress, type Biome, type Building, type Creature, type CreatureKind, type DayPhase, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_AGE, MAX_HEALTH, WALKABLE, emptyProgress, type Biome, type Building, type Creature, type CreatureKind, type DayPhase, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
 import { evaluateKnowledge, evaluateTech, foodUpkeep, hasTech, techAllowsBuilding } from './progression'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
@@ -71,6 +71,7 @@ export class World {
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
   nextId = 1
+  nextVillageId = 1
   tick = 0
   weather: Weather = 'clear'
   weatherUntil = 0
@@ -174,6 +175,7 @@ export class World {
     this.fires = []
     this.meteors = []
     this.nextId = 1
+    this.nextVillageId = 1
     this.tick = 0
     this.weather = 'clear'
     this.weatherUntil = 0
@@ -383,11 +385,246 @@ export class World {
     return this.nearestWalkable(water.x + 0.5, water.y + 0.5, 4) ?? water
   }
 
+  private static readonly MAX_VILLAGES = 8
+  private static readonly MIN_FOUND_DISTANCE = 18
+  private static readonly WAR_HOSTILITY = 55
+  private static readonly VILLAGE_NAMES = [
+    'Aldea del Roble', 'Valle del Río', 'Colina de Piedra', 'Claro del Sur',
+    'Puerto de Junco', 'Cumbre Verde', 'Hogar del Viento', 'Paso del Lobo',
+  ]
+  private static readonly VILLAGE_COLORS = [
+    '#e7bd66', '#8b9a6b', '#a67c52', '#6b8f71', '#9a7b4f', '#7a8b6e', '#b8956a', '#5c7a6a',
+  ]
+
+  hostility(a: Village, bId: number): number {
+    return a.relations[bId] ?? 0
+  }
+
+  isAtWar(village: Village, otherId: number): boolean {
+    return this.hostility(village, otherId) >= World.WAR_HOSTILITY
+  }
+
+  enemyVillages(village: Village): Village[] {
+    return this.villages.filter(o => o.id !== village.id && this.isAtWar(village, o.id))
+  }
+
+  private villageNameAndColor(index: number): { name: string; color: string } {
+    const used = new Set(this.villages.map(v => v.name))
+    for (let i = 0; i < World.VILLAGE_NAMES.length; i++) {
+      const name = World.VILLAGE_NAMES[(index + i) % World.VILLAGE_NAMES.length]!
+      if (!used.has(name)) {
+        return { name, color: World.VILLAGE_COLORS[(index + i) % World.VILLAGE_COLORS.length]! }
+      }
+    }
+    return { name: `Aldea ${index + 1}`, color: World.VILLAGE_COLORS[index % World.VILLAGE_COLORS.length]! }
+  }
+
+  private createVillage(x: number, y: number, members: Creature[], opts?: {
+    food?: number; wood?: number; stone?: number
+    knowledge?: Village['knowledge']; tech?: Village['tech']; buildingQueue?: Village['buildingQueue']
+  }): Village {
+    const style = this.villageNameAndColor(this.villages.length)
+    const village: Village = {
+      id: this.nextVillageId++,
+      name: style.name,
+      x: Math.floor(x),
+      y: Math.floor(y),
+      color: style.color,
+      food: opts?.food ?? 48,
+      wood: opts?.wood ?? 12,
+      stone: opts?.stone ?? 5,
+      members: members.map(c => c.id),
+      buildingQueue: opts?.buildingQueue ? [...opts.buildingQueue] : ['home'],
+      knowledge: opts?.knowledge ? [...opts.knowledge] : ['foraging'],
+      tech: opts?.tech ? [...opts.tech] : [],
+      progress: emptyProgress(),
+      relations: {},
+    }
+    for (const other of this.villages) {
+      village.relations[other.id] = 0
+      other.relations[village.id] = 0
+    }
+    this.villages.push(village)
+    for (const c of members) {
+      c.villageId = village.id
+      c.task = 'foraging'
+      c.activity = 'working'
+    }
+    this.recordEvent('founding', village.x + 0.5, village.y + 0.5, undefined, undefined, village.name)
+    if (!village.knowledge.includes('foraging')) village.knowledge.unshift('foraging')
+    if (!opts?.knowledge) {
+      this.recordEvent('discovery', village.x + 0.5, village.y + 0.5, undefined, undefined, 'foraging')
+    }
+    this.revision++
+    return village
+  }
+
+  private findFoundingSiteNear(cx: number, cy: number, radius = 10): { x: number; y: number } | null {
+    let best: { x: number; y: number; score: number } | null = null
+    for (let y = Math.max(4, Math.floor(cy) - radius); y <= Math.min(this.height - 5, Math.floor(cy) + radius); y++) {
+      for (let x = Math.max(4, Math.floor(cx) - radius); x <= Math.min(this.width - 5, Math.floor(cx) + radius); x++) {
+        const biome = this.get(x, y)
+        if (biome !== 'grass' && biome !== 'forest' && biome !== 'sand') continue
+        if (this.nearestVillageDistance(x + 0.5, y + 0.5) < World.MIN_FOUND_DISTANCE) continue
+        const water = this.waterNear(x, y) ? 8 : 0
+        const veg = this.vegetationAt(x, y) * 0.04
+        const dist = Math.hypot(x + 0.5 - cx, y + 0.5 - cy)
+        const score = water + veg + (biome === 'grass' ? 4 : 1) - dist * 0.2
+        if (!best || score > best.score) best = { x, y, score }
+      }
+    }
+    return best
+  }
+
+  private recruitNearbyUnsettled(): void {
+    const unsettled = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12 && c.life > 0)
+    for (const human of unsettled) {
+      let nearest: Village | undefined
+      let nearestDist = Infinity
+      for (const village of this.villages) {
+        const d = Math.hypot(village.x + 0.5 - human.x, village.y + 0.5 - human.y)
+        if (d < nearestDist) { nearest = village; nearestDist = d }
+      }
+      if (!nearest || nearestDist > 9) continue
+      const pop = this.creatures.filter(c => c.villageId === nearest!.id && c.life > 0).length
+      if (pop >= 16) continue
+      if (this.random.next() > 0.35) continue
+      human.villageId = nearest.id
+      human.task = 'foraging'
+      human.activity = 'working'
+    }
+  }
+
+  private tryFoundFromUnsettled(): void {
+    if (this.villages.length >= World.MAX_VILLAGES) return
+    const unsettled = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12 && c.life > 0)
+    if (unsettled.length < 4) return
+    const order = [...unsettled]
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(this.random.next() * (i + 1))
+      ;[order[i], order[j]] = [order[j]!, order[i]!]
+    }
+    for (const seed of order) {
+      if (this.nearestVillageDistance(seed.x, seed.y) < World.MIN_FOUND_DISTANCE && this.villages.length > 0) continue
+      const cluster = unsettled
+        .filter(c => Math.hypot(c.x - seed.x, c.y - seed.y) < 10)
+        .slice(0, 8)
+      if (cluster.length < 4) continue
+      const cx = cluster.reduce((s, c) => s + c.x, 0) / cluster.length
+      const cy = cluster.reduce((s, c) => s + c.y, 0) / cluster.length
+      const site = this.findFoundingSiteNear(cx, cy, 12)
+        ?? (this.villages.length === 0 && this.get(Math.floor(seed.x), Math.floor(seed.y)) === 'grass'
+          ? { x: Math.floor(seed.x), y: Math.floor(seed.y) }
+          : null)
+      if (!site) continue
+      this.createVillage(site.x, site.y, cluster)
+      return
+    }
+  }
+
+  private tryVillageFission(): void {
+    if (this.villages.length >= World.MAX_VILLAGES) return
+    for (const parent of [...this.villages]) {
+      if (this.villages.length >= World.MAX_VILLAGES) return
+      const members = this.creatures.filter(c => c.villageId === parent.id && c.life > 0)
+      if (members.length < 12 || parent.food < 45 || parent.wood < 14) continue
+      // Emigration only when crowded; low chance so it stays emergent.
+      const pressure = members.length - 11
+      if (this.random.next() > 0.04 + pressure * 0.015) continue
+      const settlers = members
+        .filter(c => c.age >= 16 && c.age < MAX_AGE.human * 0.75 && c.energy > 55 && c.task !== 'raiding')
+        .slice(0, 4 + Math.floor(this.random.next() * 3))
+      if (settlers.length < 4) continue
+      const angle = this.random.next() * Math.PI * 2
+      const dist = World.MIN_FOUND_DISTANCE + 4 + this.random.next() * 10
+      const tx = parent.x + Math.cos(angle) * dist
+      const ty = parent.y + Math.sin(angle) * dist
+      const site = this.findFoundingSiteNear(tx, ty, 14)
+      if (!site) continue
+      const foodShare = Math.min(22, parent.food * 0.28)
+      const woodShare = Math.min(10, parent.wood * 0.28)
+      parent.food -= foodShare
+      parent.wood -= woodShare
+      this.createVillage(site.x, site.y, settlers, {
+        food: foodShare + 8,
+        wood: woodShare + 4,
+        stone: Math.min(4, parent.stone * 0.2),
+        knowledge: parent.knowledge.filter(k => k === 'foraging' || k === 'hunting' || k === 'woodcraft' || this.random.next() < 0.5),
+        tech: parent.tech.filter(() => this.random.next() < 0.35),
+        buildingQueue: ['home'],
+      })
+      for (const s of settlers) {
+        s.x = site.x + 0.5 + (this.random.next() - 0.5) * 2
+        s.y = site.y + 0.5 + (this.random.next() - 0.5) * 2
+      }
+      return
+    }
+  }
+
+  private updateVillageRelations(): void {
+    const WAR = World.WAR_HOSTILITY
+    for (let i = 0; i < this.villages.length; i++) {
+      const a = this.villages[i]!
+      const popA = this.creatures.filter(c => c.villageId === a.id && c.life > 0).length
+      for (let j = i + 1; j < this.villages.length; j++) {
+        const b = this.villages[j]!
+        const popB = this.creatures.filter(c => c.villageId === b.id && c.life > 0).length
+        const dist = Math.hypot(a.x - b.x, a.y - b.y)
+        let hostility = Math.max(a.relations[b.id] ?? 0, b.relations[a.id] ?? 0)
+        const before = hostility
+        const scarceA = a.food < popA * 2.2
+        const scarceB = b.food < popB * 2.2
+        const scarce = scarceA || scarceB
+        if (dist < 42) {
+          const tension = 1 - dist / 42
+          if (scarce) hostility += 0.55 * tension
+          if (popA + popB > 18 && dist < 24) hostility += 0.28 * tension
+          if (dist < 16) hostility += 0.14
+          if (!scarce && a.food > popA * 4 && b.food > popB * 4) hostility -= 0.18
+          if (dist > 28 && !scarce) hostility -= 0.22
+        } else {
+          hostility -= 0.3
+        }
+        hostility = Math.max(0, Math.min(100, hostility))
+        a.relations[b.id] = hostility
+        b.relations[a.id] = hostility
+        if (before < WAR && hostility >= WAR) {
+          this.recordEvent('war', (a.x + b.x) / 2 + 0.5, (a.y + b.y) / 2 + 0.5, undefined, undefined, `${a.name} · ${b.name}`)
+        }
+      }
+    }
+  }
+
+  /** Mild friction when rival foragers meet on the same tile. */
+  noteResourceFriction(a: Village, b: Village): void {
+    this.bumpHostility(a, b, 0.35)
+  }
+
+  bumpHostility(a: Village, b: Village, amount: number): void {
+    if (a.id === b.id) return
+    const before = Math.max(a.relations[b.id] ?? 0, b.relations[a.id] ?? 0)
+    const next = Math.min(100, before + amount)
+    a.relations[b.id] = next
+    b.relations[a.id] = next
+    if (before < World.WAR_HOSTILITY && next >= World.WAR_HOSTILITY) {
+      this.recordEvent('war', (a.x + b.x) / 2 + 0.5, (a.y + b.y) / 2 + 0.5, undefined, undefined, `${a.name} · ${b.name}`)
+    }
+  }
+
   private assignVillageTasks(village: Village, members: Creature[], active: Building | undefined): void {
+    const adults = members.filter(c => c.age >= 14)
     const nearWater = this.waterNear(village.x, village.y)
-    // Always keep some gatherers, woodcutters and miners so knowledge can progress.
+    const enemies = this.enemyVillages(village)
+    const scarce = village.food < members.length * 2.2
     const needs: { task: HumanTask; weight: number }[] = []
     if (active) needs.push({ task: 'building', weight: Math.min(members.length, 2) })
+    // Raids only when war already exists and there is pressure or deep hostility — never scripted.
+    if (enemies.length && adults.length >= 4 && village.food > members.length * 1.1) {
+      const worst = Math.max(...enemies.map(e => this.hostility(village, e.id)))
+      if (worst >= 70 || (worst >= World.WAR_HOSTILITY && scarce)) {
+        needs.push({ task: 'raiding', weight: Math.min(2, Math.max(1, Math.floor(adults.length * 0.22))) })
+      }
+    }
     needs.push({ task: 'foraging', weight: village.food < 40 ? 3 : 1 })
     needs.push({ task: 'hunting', weight: village.food < 35 ? 2 : 1 })
     if (nearWater) needs.push({ task: 'fishing', weight: village.food < 45 ? 2 : 1 })
@@ -398,7 +635,7 @@ export class World {
     for (let i = 0; i < members.length; i++) {
       const human = members[i]!
       human.task = slots[i % slots.length] ?? 'foraging'
-      human.activity = 'working'
+      human.activity = human.task === 'raiding' ? 'raiding' : 'working'
     }
   }
 
@@ -418,27 +655,23 @@ export class World {
   }
 
   advanceVillages(): void {
-    const adults = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12)
-    if (!this.villages.length && adults.length >= 5) {
-      let site: { x: number; y: number } | undefined = adults.find(c => this.get(Math.floor(c.x), Math.floor(c.y)) === 'grass' && this.waterNear(Math.floor(c.x), Math.floor(c.y)))
-      if (!site) {
-        for (let y = 8; y < this.height - 8 && !site; y++) for (let x = 8; x < this.width - 8; x++) {
-          if (this.get(x, y) === 'grass' && this.vegetationAt(x, y) > 45 && this.waterNear(x, y)) { site = { x, y }; break }
+    this.recruitNearbyUnsettled()
+    this.tryFoundFromUnsettled()
+    this.tryVillageFission()
+    this.updateVillageRelations()
+
+    // Drop empty villages so new ones can form elsewhere.
+    const aliveIds = new Set(this.creatures.filter(c => c.kind === 'human' && c.villageId && c.life > 0).map(c => c.villageId!))
+    if (this.villages.some(v => !aliveIds.has(v.id))) {
+      this.villages = this.villages.filter(v => aliveIds.has(v.id))
+      for (const village of this.villages) {
+        for (const id of Object.keys(village.relations)) {
+          if (!aliveIds.has(Number(id))) delete village.relations[Number(id)]
         }
       }
-      if (site) {
-        const members = adults.slice(0, Math.min(8, adults.length))
-        const village: Village = {
-          id: 1, name: 'Aldea del Roble', x: Math.floor(site.x), y: Math.floor(site.y), color: '#e7bd66',
-          food: 48, wood: 12, stone: 5, members: members.map(c => c.id), buildingQueue: ['home'],
-          knowledge: ['foraging'], tech: [], progress: emptyProgress(),
-        }
-        this.villages.push(village)
-        for (const c of members) { c.villageId = village.id; c.task = 'foraging'; c.activity = 'working' }
-        this.recordEvent('discovery', village.x + 0.5, village.y + 0.5, undefined, undefined, 'foraging')
-        this.revision++
-      }
+      this.buildings = this.buildings.filter(b => aliveIds.has(b.villageId))
     }
+
     const season = this.season()
     const farmBoost = season === 'spring' ? 1.35 : season === 'summer' ? 1.1 : season === 'autumn' ? 0.85 : 0.35
     for (const village of this.villages) {
