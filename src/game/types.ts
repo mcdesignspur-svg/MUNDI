@@ -15,10 +15,12 @@ export type AnimalReason = 'none' | 'danger' | 'fire' | 'water' | 'food' | 'habi
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
 export type Weather = 'clear' | 'rain' | 'drought' | 'storm'
 export type DayPhase = 'dawn' | 'day' | 'dusk' | 'night'
-export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'temperature' | 'elevation' | 'hazards'
+export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'temperature' | 'elevation' | 'hazards' | 'pathCost' | 'influence'
 export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque' | 'frio' | 'calor'
-export type WorldEventKind = 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue' | 'flood' | 'freeze' | 'discovery' | 'research'
-export type HumanTask = 'foraging' | 'hunting' | 'lumber' | 'mining' | 'building' | 'fishing' | 'idle'
+export type WorldEventKind =
+  | 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue' | 'flood' | 'freeze'
+  | 'discovery' | 'research' | 'founding' | 'war' | 'raid' | 'prophecy' | 'trade' | 'succession'
+export type HumanTask = 'foraging' | 'hunting' | 'lumber' | 'mining' | 'building' | 'fishing' | 'raiding' | 'idle'
 /** @deprecated Use foraging; kept only for restore compatibility aliases. */
 export type LegacyHumanTask = HumanTask | 'gathering'
 export type BuildingType = 'home' | 'storehouse' | 'farm' | 'sawmill'
@@ -51,6 +53,8 @@ export interface Village {
   knowledge: KnowledgeId[]
   tech: TechId[]
   progress: VillageProgress
+  /** Hostility toward other villages (0–100). Synced from FactionManager. */
+  relations: Record<number, number>
 }
 
 export interface DeathRecord {
@@ -87,6 +91,10 @@ export type ToolId =
   | 'paint-forest'
   | 'paint-mountain'
   | 'paint-snow'
+  | 'brush-heat'
+  | 'brush-humidity'
+  | 'brush-elevation'
+  | 'brush-fertility'
   | 'spawn-human'
   | 'spawn-rabbit'
   | 'spawn-wolf'
@@ -141,6 +149,7 @@ export const DEATH_CAUSE_NAMES: Record<DeathCause, string> = {
 export const WORLD_EVENT_NAMES: Record<WorldEventKind, string> = {
   birth: 'Nacimiento', hunt: 'Cacería', death: 'Pérdida', migration: 'Migración', fire: 'Incendio', rescue: 'Salida del agua',
   flood: 'Inundación', freeze: 'Helada', discovery: 'Descubrimiento', research: 'Tecnología',
+  founding: 'Fundación', war: 'Guerra', raid: 'Incursión', prophecy: 'Profecía', trade: 'Comercio', succession: 'Sucesión',
 }
 export const SEASON_NAMES: Record<Season, string> = { spring: 'Primavera', summer: 'Verano', autumn: 'Otoño', winter: 'Invierno' }
 export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía', storm: 'Tormenta' }
@@ -148,6 +157,7 @@ export const DAY_PHASE_NAMES: Record<DayPhase, string> = { dawn: 'Amanecer', day
 export const OVERLAY_NAMES: Record<Overlay, string> = {
   none: 'Normal', food: 'Alimento', moisture: 'Humedad', fertility: 'Fertilidad',
   temperature: 'Temperatura', elevation: 'Elevación', hazards: 'Peligros',
+  pathCost: 'Coste de ruta', influence: 'Influencia política',
 }
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
@@ -158,7 +168,7 @@ export const ANIMAL_REASON_NAMES: Record<AnimalReason, string> = {
 }
 export const TASK_NAMES: Record<HumanTask, string> = {
   foraging: 'Recolectando bayas', hunting: 'Cazando conejos', lumber: 'Talando árboles', mining: 'Extrayendo piedra',
-  building: 'Construyendo', fishing: 'Pescando', idle: 'Sin tarea',
+  building: 'Construyendo', fishing: 'Pescando', raiding: 'En incursión', idle: 'Sin tarea',
 }
 export const BUILDING_NAMES: Record<BuildingType, string> = { home: 'Vivienda', storehouse: 'Almacén', farm: 'Granja', sawmill: 'Aserradero' }
 export const KNOWLEDGE_NAMES: Record<KnowledgeId, string> = {

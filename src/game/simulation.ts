@@ -1,6 +1,7 @@
 import { COMFORT, FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Activity, type AnimalIntent, type AnimalReason, type Creature, type DeathCause, type Village } from './types'
 import { berryYield, fishYield, hasKnowledge, huntDamage, huntFoodYield, lumberYield, stoneYield, workSpeed } from './progression'
 import { MAX_FIRES, type World } from './world'
+import { engine } from './core/engine'
 
 export const STEP = 1 / 20
 const SPEED = { human: 1.85, rabbit: 3.4, wolf: 2.95 }
@@ -98,6 +99,7 @@ function thermalStress(world: World, c: Creature): DeathCause | null {
 
 function villagerTarget(world: World, c: Creature, village: Village): { x: number; y: number } {
   const construction = world.buildings.find(b => b.villageId === village.id && b.progress < 1)
+  if (c.task === 'raiding' && c.goalX !== undefined && c.goalY !== undefined) return { x: c.goalX - 0.5, y: c.goalY - 0.5 }
   if (c.task === 'building' && construction) return construction
   if (c.task === 'foraging') return world.nearestBerry(c.x, c.y, 20) ?? world.nearestFood(c.x, c.y, 18) ?? village
   if (c.task === 'fishing') return world.nearestShore(c.x, c.y, 24) ?? village
@@ -560,4 +562,5 @@ export function simulate(world: World, dt = STEP): void {
   world.recount()
   world.capturePopulationHistory()
   world.spatial.rebuild(world.creatures)
+  engine.afterAgents(world)
 }
