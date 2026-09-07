@@ -254,8 +254,8 @@ export class World {
       // Predators begin with enough reserves to roam before their first hunt.
       energy: kind === 'wolf' ? 86 : kind === 'human' ? 82 : 70,
       // A starter population should settle before it starts growing. Rabbits
-      // receive a longer first cooldown; newborns are also protected by age.
-      breedCooldown: kind === 'rabbit' ? 45 + this.random.next() * 60 : 10 + this.random.next() * 9,
+      // receive a modest first cooldown; newborns are also protected by age.
+      breedCooldown: kind === 'rabbit' ? 28 + this.random.next() * 36 : 10 + this.random.next() * 9,
       age: 0,
       activity: 'exploring',
       // Freshly created beings set off right away instead of waiting for the
@@ -389,7 +389,12 @@ export class World {
     const needs: { task: HumanTask; weight: number }[] = []
     if (active) needs.push({ task: 'building', weight: Math.min(members.length, 2) })
     needs.push({ task: 'foraging', weight: village.food < 40 ? 3 : 1 })
-    needs.push({ task: 'hunting', weight: village.food < 35 ? 2 : 1 })
+    // Hunt for food only when stock is low; keep a light learning hunt until knowledge unlocks.
+    // Pause hunting when rabbits are scarce so the colony can rebound under dual predation.
+    const rabbitsScarce = this.population.rabbit < 12
+    const learningHunt = village.progress.hunts < 3 && !rabbitsScarce
+    const huntWeight = rabbitsScarce ? 0 : village.food < 22 ? 2 : village.food < 34 ? 1 : learningHunt ? 1 : 0
+    if (huntWeight > 0) needs.push({ task: 'hunting', weight: huntWeight })
     if (nearWater) needs.push({ task: 'fishing', weight: village.food < 45 ? 2 : 1 })
     needs.push({ task: 'lumber', weight: village.wood < 30 ? 2 : 1 })
     needs.push({ task: 'mining', weight: village.stone < 18 ? 2 : 1 })

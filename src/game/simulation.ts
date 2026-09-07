@@ -3,8 +3,8 @@ import { berryYield, fishYield, hasKnowledge, huntDamage, huntFoodYield, lumberY
 import { MAX_FIRES, type World } from './world'
 
 export const STEP = 1 / 20
-const SPEED = { human: 1.85, rabbit: 3.35, wolf: 2.9 }
-const METABOLISM = { human: 0.58, rabbit: 0.85, wolf: 0.95 }
+const SPEED = { human: 1.85, rabbit: 3.4, wolf: 2.95 }
+const METABOLISM = { human: 0.58, rabbit: 0.82, wolf: 0.88 }
 const FOOD_THRESHOLD = { human: 72, rabbit: 68, wolf: 76 }
 const RABBIT_LIMIT = 72
 const VILLAGE_SAFE_RADIUS = 10
@@ -104,7 +104,8 @@ function villagerTarget(world: World, c: Creature, village: Village): { x: numbe
   if (c.task === 'lumber') return world.nearestBiome(c.x, c.y, 'forest', 26) ?? village
   if (c.task === 'mining') return world.nearestBiome(c.x, c.y, 'mountain', 28) ?? village
   if (c.task === 'hunting') {
-    const prey = closest(c, world.spatial.nearby(c.x, c.y, 14).filter(o => o.kind === 'rabbit' && o.life > 0))
+    // Keep hunters local so rabbit warrens farther from the village can recover.
+    const prey = closest(c, world.spatial.nearby(c.x, c.y, 10).filter(o => o.kind === 'rabbit' && o.life > 0))
     if (prey) return { x: prey.x - 0.5, y: prey.y - 0.5 }
     return world.nearestBerry(c.x, c.y, 16) ?? village
   }
@@ -171,17 +172,22 @@ function rabbitHabitatPoor(world: World, c: Creature): boolean {
   return world.vegetationAt(x, y) < 18 || world.moistureAt(x, y) < 28 || !world.nearestFood(c.x, c.y, 8)
 }
 
+function humanThreatensRabbit(human: Creature): boolean {
+  // Village hunters and hungry people both count as predators; idle villagers do not.
+  return human.task === 'hunting' || human.energy < 78 || (!human.villageId && human.energy < 86)
+}
+
 function decideRabbit(world: World, c: Creature): void {
   const night = world.dayPhase() === 'night' || world.dayPhase() === 'dusk'
-  const nearby = world.spatial.nearby(c.x, c.y, night ? 11 : 9)
-  const predator = closest(c, nearby.filter(o => o.life > 0 && (o.kind === 'wolf' || (o.kind === 'human' && !o.villageId && o.energy < 82))))
+  const nearby = world.spatial.nearby(c.x, c.y, night ? 12 : 10)
+  const predator = closest(c, nearby.filter(o => o.life > 0 && (o.kind === 'wolf' || (o.kind === 'human' && humanThreatensRabbit(o)))))
   const hazard = nearestHazard(world, c)
   if (hazard) {
     setAnimalGoal(c, 'fleeing', 'fire', c.x + (c.x - hazard.x) * 3, c.y + (c.y - hazard.y) * 3, world.tick + 20 * 4)
     return
   }
   if (predator) {
-    const cover = world.nearestBiome(c.x, c.y, 'forest', 10)
+    const cover = world.nearestBiome(c.x, c.y, 'forest', 12)
     if (cover && Math.hypot(cover.x + 0.5 - predator.x, cover.y + 0.5 - predator.y) > Math.hypot(c.x - predator.x, c.y - predator.y) + 1) {
       setAnimalGoal(c, 'sheltering', 'danger', cover.x + 0.5, cover.y + 0.5, world.tick + 20 * 8)
     } else {
@@ -239,11 +245,12 @@ function decideWolf(world: World, c: Creature): void {
     const village = world.villages.reduce((nearest, candidate) => !nearest || distanceTo(c, candidate.x + 0.5, candidate.y + 0.5) < distanceTo(c, nearest.x + 0.5, nearest.y + 0.5) ? candidate : nearest, undefined as typeof world.villages[number] | undefined)
     if (village) { beginMigration(world, c, 'danger', c.x + (c.x - village.x) * 3, c.y + (c.y - village.y) * 3, world.tick + 20 * 12); return }
   }
-  const huntRadius = night ? 13 : 10
+  const huntRadius = night ? 12 : 9
   const nearby = world.spatial.nearby(c.x, c.y, huntRadius)
   const rabbits = nearby.filter(o => o.kind === 'rabbit' && o.life > 0 && wolfCanHuntRabbit(world, c, o))
   const prey = closest(c, rabbits.length ? rabbits : nearby.filter(o => o.kind === 'human' && o.life > 0 && wolfCanHuntHuman(world, c, o)))
-  const hungry = c.energy < FOOD_THRESHOLD.wolf || (night && c.energy < 88)
+  // Night still favors wolves, but they no longer hunt on a nearly full stomach.
+  const hungry = c.energy < FOOD_THRESHOLD.wolf || (night && c.energy < 84)
   if (hungry && prey) {
     const distance = Math.sqrt(distance2(c, prey))
     setAnimalGoal(c, distance > 2.2 ? 'stalking' : 'hunting', 'prey', prey.x, prey.y, world.tick + 20 * 6)
@@ -302,9 +309,26 @@ function decideHuman(world: World, c: Creature): void {
 
 function rabbitCanBreed(world: World, c: Creature): boolean {
   const x = Math.floor(c.x), y = Math.floor(c.y)
-  return world.vegetationAt(x, y) >= 42 && world.moistureAt(x, y) >= 38 && world.fertilityAt(x, y) >= 36
-    && world.temperatureAt(x, y) > 4 && world.temperatureAt(x, y) < 30
-    && !world.spatial.nearby(c.x, c.y, 8).some(o => o.kind === 'wolf' && o.life > 0)
+  // Under dual predation, allow breeding in slightly thinner forage so colonies rebound.
+  const scarce = world.population.rabbit < 20
+  const vegNeed = scarce ? 30 : 42
+  const moistNeed = scarce ? 28 : 38
+  const fertNeed = scarce ? 26 : 36
+  return world.vegetationAt(x, y) >= vegNeed && world.moistureAt(x, y) >= moistNeed && world.fertilityAt(x, y) >= fertNeed
+    && world.temperatureAt(x, y) > 2 && world.temperatureAt(x, y) < 32
+    && !world.spatial.nearby(c.x, c.y, scarce ? 4 : 8).some(o => o.kind === 'wolf' && o.life > 0)
+}
+
+function rabbitEvadesStrike(world: World, rabbit: Creature, predator: Creature): boolean {
+  const biome = world.get(Math.floor(rabbit.x), Math.floor(rabbit.y))
+  const fleeing = rabbit.activity === 'fleeing' || rabbit.activity === 'sheltering'
+  const night = world.dayPhase() === 'night' || world.dayPhase() === 'dusk'
+  // Humans are noisy hunters; wolves land more bites, especially at night.
+  let miss = predator.kind === 'human' ? (fleeing ? 0.38 : 0.1) : (fleeing ? 0.2 : 0.05)
+  if (biome === 'forest') miss += predator.kind === 'human' ? 0.22 : 0.12
+  if (predator.kind === 'wolf' && night) miss *= 0.6
+  if (world.population.rabbit < 14) miss += 0.18
+  return world.random.next() < miss
 }
 
 function windBiasedNeighbor(world: World): { x: number; y: number } {
@@ -400,7 +424,7 @@ export function simulate(world: World, dt = STEP): void {
     const targets = world.spatial.nearby(c.x, c.y, 0.9).filter(o => o.life > 0 && (
       (c.kind === 'wolf' && c.energy < FOOD_THRESHOLD.wolf && (c.intent === 'stalking' || c.intent === 'hunting') && ((o.kind === 'rabbit' && wolfCanHuntRabbit(world, c, o)) || (o.kind === 'human' && wolfCanHuntHuman(world, c, o)))) ||
       (c.kind === 'human' && o.kind === 'wolf') ||
-      (c.kind === 'human' && o.kind === 'rabbit' && (c.energy < 86 || c.task === 'hunting'))
+      (c.kind === 'human' && o.kind === 'rabbit' && world.population.rabbit >= 10 && (c.energy < 78 || c.task === 'hunting'))
     ))
     const target = closest(c, targets)
     let engaged = false
@@ -409,25 +433,36 @@ export function simulate(world: World, dt = STEP): void {
       const defending = c.kind === 'human' && target.kind === 'wolf'
       c.activity = defending ? 'defending' : 'hunting'
       c.vx = c.vy = 0
-      const humanStrike = c.kind === 'human' ? huntDamage(villageForHunt) : (target.kind === 'wolf' ? 8 : 6)
-      const fatal = damage(target, c.kind === 'wolf' ? (target.kind === 'human' ? 7 : 10) : humanStrike)
-      c.attackCooldown = c.kind === 'wolf' ? 0.72 : 0.82
-      if (fatal) {
-        world.recordEvent('hunt', target.x, target.y, target.kind)
-        world.recordDeath(target, 'ataque')
-        c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24))
-        c.activity = 'eating'
-        c.decisionIn = Math.min(c.decisionIn, 0.35)
-        if (c.kind === 'human' && villageForHunt && target.kind === 'rabbit') {
-          villageForHunt.food += huntFoodYield(villageForHunt)
-          villageForHunt.progress.hunts++
+      // Escaping rabbits in cover often slip the strike; predators burn the cooldown either way.
+      if (target.kind === 'rabbit' && rabbitEvadesStrike(world, target, c)) {
+        c.attackCooldown = c.kind === 'wolf' ? 0.55 : 0.7
+        if (target.activity !== 'fleeing' && target.activity !== 'sheltering') {
+          setAnimalGoal(target, 'fleeing', 'danger', target.x + (target.x - c.x) * 4, target.y + (target.y - c.y) * 4, world.tick + 20 * 5)
+          target.decisionIn = 0.35
+        }
+      } else {
+        const humanStrike = c.kind === 'human' ? huntDamage(villageForHunt) : (target.kind === 'wolf' ? 8 : 6)
+        const wolfStrike = target.kind === 'human' ? 7 : 9
+        const fatal = damage(target, c.kind === 'wolf' ? wolfStrike : humanStrike)
+        c.attackCooldown = c.kind === 'wolf' ? 0.75 : 0.85
+        if (fatal) {
+          world.recordEvent('hunt', target.x, target.y, target.kind)
+          world.recordDeath(target, 'ataque')
+          c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 38 : 24))
+          c.activity = 'eating'
+          c.decisionIn = Math.min(c.decisionIn, 0.35)
+          if (c.kind === 'human' && villageForHunt && target.kind === 'rabbit') {
+            villageForHunt.food += huntFoodYield(villageForHunt)
+            villageForHunt.progress.hunts++
+          }
         }
       }
     }
 
     if (!engaged && !harvesting && c.activity !== 'eating' && c.activity !== 'resting') {
-      const nightSlow = world.dayPhase() === 'night' && c.kind === 'rabbit' ? 0.72 : world.dayPhase() === 'night' && c.kind === 'wolf' ? 1.18 : 1
-      const speed = SPEED[c.kind] * dt * nightSlow * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : 1)
+      const nightSlow = world.dayPhase() === 'night' && c.kind === 'rabbit' ? 0.75 : world.dayPhase() === 'night' && c.kind === 'wolf' ? 1.16 : 1
+      const fleeBoost = (c.activity === 'fleeing' || c.activity === 'sheltering') ? (c.kind === 'rabbit' ? 1.42 : 1.35) : c.activity === 'stalking' ? 0.72 : 1
+      const speed = SPEED[c.kind] * dt * nightSlow * fleeBoost
       const nx = c.x + c.vx * speed, ny = c.y + c.vy * speed
       // A stranded creature may cross a few water cells only while following
       // its emergency shore route; ordinary navigation still never enters water.
@@ -438,12 +473,14 @@ export function simulate(world: World, dt = STEP): void {
       c.vx = c.vy = 0
     }
 
-    if (c.kind === 'rabbit' && world.population.rabbit + births.length < RABBIT_LIMIT && c.age > 14 && c.energy > 88 && c.breedCooldown === 0 && rabbitCanBreed(world, c) && world.creatures.length + births.length < MAX_AGENTS) {
-      const nearbyRabbits = world.spatial.nearby(c.x, c.y, 7).filter(o => o.kind === 'rabbit')
-      const mate = nearbyRabbits.find(o => o.id !== c.id && o.energy > 84 && o.age > 14 && o.breedCooldown === 0 && rabbitCanBreed(world, o))
-      if (mate && nearbyRabbits.length < 10 && world.random.next() < 0.16) {
-        births.push({ x: tx, y: ty }); c.energy -= 16; mate.energy -= 10
-        c.breedCooldown = mate.breedCooldown = 105 + world.random.next() * 45
+    if (c.kind === 'rabbit' && world.population.rabbit + births.length < RABBIT_LIMIT && c.age > 12 && c.energy > 80 && c.breedCooldown === 0 && rabbitCanBreed(world, c) && world.creatures.length + births.length < MAX_AGENTS) {
+      const nearbyRabbits = world.spatial.nearby(c.x, c.y, 8).filter(o => o.kind === 'rabbit')
+      const mate = nearbyRabbits.find(o => o.id !== c.id && o.energy > 76 && o.age > 12 && o.breedCooldown === 0 && rabbitCanBreed(world, o))
+      const scarce = world.population.rabbit < 20
+      const breedChance = scarce ? 0.32 : nearbyRabbits.length < 6 ? 0.18 : 0.14
+      if (mate && nearbyRabbits.length < (scarce ? 14 : 10) && world.random.next() < breedChance) {
+        births.push({ x: tx, y: ty }); c.energy -= 14; mate.energy -= 9
+        c.breedCooldown = mate.breedCooldown = (scarce ? 55 : 95) + world.random.next() * (scarce ? 28 : 45)
       }
     }
     if (c.kind === 'human' && c.villageId && c.age > 40 && c.age < MAX_AGE.human * 0.72 && c.energy > 70 && c.breedCooldown === 0 && world.creatures.length + humanBirths.length < MAX_AGENTS) {
@@ -459,12 +496,13 @@ export function simulate(world: World, dt = STEP): void {
         }
       }
     }
-    if (c.kind === 'wolf' && world.population.wolf < 10 && c.age > 30 && c.energy > 78 && c.breedCooldown === 0 && world.creatures.length + wolfBirths.length < MAX_AGENTS) {
-      const mate = world.spatial.nearby(c.x, c.y, 6).find(o => o.kind === 'wolf' && o.id !== c.id && o.energy > 70 && o.breedCooldown === 0 && o.age > 30)
-      if (mate && world.random.next() < 0.05) {
+    if (c.kind === 'wolf' && world.population.wolf < 12 && c.age > 28 && c.energy > 74 && c.breedCooldown === 0 && world.creatures.length + wolfBirths.length < MAX_AGENTS) {
+      const mate = world.spatial.nearby(c.x, c.y, 7).find(o => o.kind === 'wolf' && o.id !== c.id && o.energy > 68 && o.breedCooldown === 0 && o.age > 28)
+      const preyNearby = world.spatial.nearby(c.x, c.y, 10).some(o => o.kind === 'rabbit' && o.life > 0)
+      if (mate && preyNearby && world.random.next() < 0.07) {
         wolfBirths.push({ x: tx, y: ty })
-        c.energy -= 18; mate.energy -= 12
-        c.breedCooldown = mate.breedCooldown = 220 + world.random.next() * 80
+        c.energy -= 16; mate.energy -= 10
+        c.breedCooldown = mate.breedCooldown = 180 + world.random.next() * 70
       }
     }
   }
