@@ -17,12 +17,41 @@ export type Weather = 'clear' | 'rain' | 'drought' | 'storm'
 export type DayPhase = 'dawn' | 'day' | 'dusk' | 'night'
 export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'temperature' | 'elevation' | 'hazards'
 export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque' | 'frio' | 'calor'
-export type WorldEventKind = 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue' | 'flood' | 'freeze'
-export type HumanTask = 'gathering' | 'lumber' | 'mining' | 'building' | 'fishing' | 'idle'
+export type WorldEventKind = 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue' | 'flood' | 'freeze' | 'discovery' | 'research'
+export type HumanTask = 'foraging' | 'hunting' | 'lumber' | 'mining' | 'building' | 'fishing' | 'idle'
+/** @deprecated Use foraging; kept only for restore compatibility aliases. */
+export type LegacyHumanTask = HumanTask | 'gathering'
 export type BuildingType = 'home' | 'storehouse' | 'farm' | 'sawmill'
 
+export type KnowledgeId = 'foraging' | 'hunting' | 'fishing' | 'woodcraft' | 'stonecraft' | 'farming' | 'firecraft'
+export type TechId = 'wood_tools' | 'stone_tools' | 'farm' | 'sawmill' | 'storehouse'
+
+export interface VillageProgress {
+  berries: number
+  hunts: number
+  fish: number
+  trees: number
+  stone: number
+  nights: number
+  farmTicks: number
+}
+
 export interface Building { id: number; villageId: number; type: BuildingType; x: number; y: number; progress: number }
-export interface Village { id: number; name: string; x: number; y: number; color: string; food: number; wood: number; stone: number; members: number[]; buildingQueue: BuildingType[] }
+export interface Village {
+  id: number
+  name: string
+  x: number
+  y: number
+  color: string
+  food: number
+  wood: number
+  stone: number
+  members: number[]
+  buildingQueue: BuildingType[]
+  knowledge: KnowledgeId[]
+  tech: TechId[]
+  progress: VillageProgress
+}
 
 export interface DeathRecord {
   id: number
@@ -41,6 +70,8 @@ export interface WorldEvent {
   tick: number
   creature?: CreatureKind
   cause?: DeathCause
+  /** Knowledge or tech id for discovery/research events. */
+  label?: string
   count: number
 }
 
@@ -88,6 +119,8 @@ export interface Creature {
   waterEscapeUntil?: number
   villageId?: number
   task?: HumanTask
+  /** Seconds spent harvesting at the current goal before delivering. */
+  workTimer?: number
 }
 
 export type Activity = 'exploring' | 'seeking-food' | 'eating' | 'hunting' | 'stalking' | 'defending' | 'fleeing' | 'sheltering' | 'migrating' | 'resting' | 'working'
@@ -107,7 +140,7 @@ export const DEATH_CAUSE_NAMES: Record<DeathCause, string> = {
 }
 export const WORLD_EVENT_NAMES: Record<WorldEventKind, string> = {
   birth: 'Nacimiento', hunt: 'Cacería', death: 'Pérdida', migration: 'Migración', fire: 'Incendio', rescue: 'Salida del agua',
-  flood: 'Inundación', freeze: 'Helada',
+  flood: 'Inundación', freeze: 'Helada', discovery: 'Descubrimiento', research: 'Tecnología',
 }
 export const SEASON_NAMES: Record<Season, string> = { spring: 'Primavera', summer: 'Verano', autumn: 'Otoño', winter: 'Invierno' }
 export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía', storm: 'Tormenta' }
@@ -124,15 +157,43 @@ export const ANIMAL_REASON_NAMES: Record<AnimalReason, string> = {
   none: '', danger: 'peligro cercano', fire: 'fuego o lava', water: 'busca tierra firme', food: 'busca alimento', habitat: 'hábitat agotado', prey: 'busca presas', rest: 'necesita descansar',
 }
 export const TASK_NAMES: Record<HumanTask, string> = {
-  gathering: 'Recolectando alimento', lumber: 'Cortando madera', mining: 'Extrayendo piedra',
+  foraging: 'Recolectando bayas', hunting: 'Cazando conejos', lumber: 'Talando árboles', mining: 'Extrayendo piedra',
   building: 'Construyendo', fishing: 'Pescando', idle: 'Sin tarea',
 }
 export const BUILDING_NAMES: Record<BuildingType, string> = { home: 'Vivienda', storehouse: 'Almacén', farm: 'Granja', sawmill: 'Aserradero' }
+export const KNOWLEDGE_NAMES: Record<KnowledgeId, string> = {
+  foraging: 'Forrajeo', hunting: 'Caza', fishing: 'Pesca', woodcraft: 'Carpintería',
+  stonecraft: 'Cantería', farming: 'Agricultura', firecraft: 'Dominio del fuego',
+}
+export const TECH_NAMES: Record<TechId, string> = {
+  wood_tools: 'Herramientas de madera', stone_tools: 'Herramientas de piedra',
+  farm: 'Cultivo', sawmill: 'Aserradero', storehouse: 'Almacén',
+}
+export const KNOWLEDGE_HINTS: Record<KnowledgeId, string> = {
+  foraging: 'Recolecta bayas en praderas y bosques',
+  hunting: 'Caza varios conejos para la aldea',
+  fishing: 'Pesca en la orilla del agua',
+  woodcraft: 'Tala varios árboles',
+  stonecraft: 'Extrae piedra de las montañas',
+  farming: 'Mantén comida estable junto a tierra fértil',
+  firecraft: 'Sobrevive muchas noches en la aldea',
+}
+export const TECH_HINTS: Record<TechId, string> = {
+  wood_tools: 'Requiere carpintería y madera acumulada',
+  stone_tools: 'Requiere cantería, herramientas de madera y piedra',
+  farm: 'Requiere agricultura y herramientas de madera',
+  sawmill: 'Requiere carpintería, herramientas de madera y una vivienda',
+  storehouse: 'Requiere herramientas de madera y comida acumulada',
+}
 /** Comfort band in °C-like units used by metabolism and habitat scoring. */
 export const COMFORT: Record<CreatureKind, { min: number; max: number }> = {
   human: { min: 4, max: 34 },
   rabbit: { min: 2, max: 32 },
   wolf: { min: -6, max: 30 },
+}
+
+export function emptyProgress(): VillageProgress {
+  return { berries: 0, hunts: 0, fish: 0, trees: 0, stone: 0, nights: 0, farmTicks: 0 }
 }
 
 export interface FireCell {
