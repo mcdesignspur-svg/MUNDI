@@ -18,6 +18,7 @@ Abre la URL de Vite (por defecto `http://localhost:5173`).
 - **Hidrología** — la lluvia crea escorrentía, inunda valles bajos y alimenta humedad
 - **Día / noche** — lobos cazan de noche, conejos se refugian, humanos descansan; el mapa se tiñe
 - **Viento y tormentas** — el fuego se propaga a favor del viento; los rayos pueden prender
+- **Sucesión de biomas** — sequía → arena, frío → nieve, humedad + calor → bosque
 - **Cosecha real** — los aldeanos van a talar, minar, recolectar bayas, cazar y pescar; el stock solo sube al actuar
 - **Conocimiento y tecnología** — la aldea desbloquea saberes (caza, carpintería…) y tech (herramientas, granja…) al cumplir requisitos
 
