@@ -1,6 +1,6 @@
 # MUNDI
 
-Simulador de mundos en el navegador (inspirado en WorldBox).
+Simulador de mundos en el navegador con física ecológica creíble: más profundidad que un sandbox de biomas pintados.
 
 ## Jugar
 
@@ -11,14 +11,25 @@ npm run dev
 
 Abre la URL de Vite (por defecto `http://localhost:5173`).
 
+## Qué lo hace realista
+
+- **Elevación y ríos** — el mapa guarda altura; los ríos se tallan cuesta abajo al generar el mundo
+- **Temperatura local** — latitud, altitud, estación, sol y clima definen °C por celda
+- **Hidrología** — la lluvia crea escorrentía, inunda valles bajos y alimenta humedad
+- **Día / noche** — lobos cazan de noche, conejos se refugian, humanos descansan; el mapa se tiñe
+- **Viento y tormentas** — el fuego se propaga a favor del viento; los rayos pueden prender
+- **Sucesión de biomas** — sequía → arena, frío → nieve, humedad + calor → bosque
+- **Aldeas** — pesca, granjas ligadas a fertilidad/estación, y trabajos autónomos
+
 ## Controles
 
 - **Biomas** — pinta océano, agua, arena, hierba, bosque, montaña o nieve
 - **Vida** — spawnea humanos, conejos y lobos
-- **Desastres** — fuego (se propaga), meteorito, lluvia (apaga fuego)
+- **Desastres** — fuego (sigue el viento), meteorito, lluvia (apaga y encharca)
+- **Capas** — alimento, humedad, fertilidad, temperatura, elevación, peligros
 - **Rueda** — zoom
 - **Espacio + arrastrar** / herramienta Mano / clic derecho — pan
-- **Pincel / Velocidad / Pausa / Nuevo mundo** — barra inferior
+- **Pincel / Velocidad / Pausa / Mis mundos** — barra inferior
 
 ## Stack
 
