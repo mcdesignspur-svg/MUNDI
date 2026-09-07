@@ -413,7 +413,8 @@ export class World {
   }
 
   season(): Season {
-    return (['spring', 'summer', 'autumn', 'winter'] as const)[Math.floor(this.tick / (20 * 360)) % 4]!
+    // ~12 world-hours per season keeps climate readable without wiping life at ×4.
+    return (['spring', 'summer', 'autumn', 'winter'] as const)[Math.floor(this.tick / (20 * 720)) % 4]!
   }
 
   /** 0…1 through the current day (midnight → midnight). */
@@ -441,7 +442,7 @@ export class World {
   /** Recompute local temperatures from elevation, latitude, season, weather and sun. */
   refreshTemperature(): void {
     const season = this.season()
-    const base = season === 'summer' ? 24 : season === 'winter' ? 6 : season === 'spring' ? 16 : 12
+    const base = season === 'summer' ? 25 : season === 'winter' ? 9 : season === 'spring' ? 17 : 13
     const weatherBias = this.weather === 'drought' ? 3.5 : this.weather === 'storm' ? -2.5 : this.weather === 'rain' ? -1.2 : 0
     const solar = this.solarFactor()
     for (let y = 0; y < this.height; y++) {

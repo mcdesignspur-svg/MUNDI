@@ -79,14 +79,15 @@ function damage(target: Creature, amount: number): boolean {
 function thermalStress(world: World, c: Creature): DeathCause | null {
   const temp = world.temperatureAt(Math.floor(c.x), Math.floor(c.y))
   const band = COMFORT[c.kind]
-  const shelter = world.get(Math.floor(c.x), Math.floor(c.y)) === 'forest' || world.get(Math.floor(c.x), Math.floor(c.y)) === 'snow' || !!c.villageId
-  // Mild discomfort only slows life; lethal stress needs clear extremes.
-  if (temp < band.min - 4 - (shelter ? 5 : 0)) {
-    damage(c, Math.max(0.4, (band.min - 4 - temp) * 0.18) * STEP)
+  const biome = world.get(Math.floor(c.x), Math.floor(c.y))
+  const shelter = biome === 'forest' || biome === 'snow' || !!c.villageId
+  // Only lethal far outside the comfort band; mild chill just raises metabolism elsewhere.
+  if (temp < band.min - 8 - (shelter ? 4 : 0)) {
+    damage(c, Math.max(0.25, (band.min - 8 - temp) * 0.12) * STEP)
     return 'frio'
   }
-  if (temp > band.max + 4 + (shelter ? 3 : 0)) {
-    damage(c, Math.max(0.4, (temp - band.max - 4) * 0.15) * STEP)
+  if (temp > band.max + 8 + (shelter ? 3 : 0)) {
+    damage(c, Math.max(0.25, (temp - band.max - 8) * 0.1) * STEP)
     return 'calor'
   }
   return null
@@ -248,6 +249,8 @@ export function simulate(world: World, dt = STEP): void {
   world.spatial.rebuild(world.creatures)
   const burning = new Set(world.fires.map(f => world.index(f.x, f.y)))
   const births: { x: number; y: number }[] = []
+  const humanBirths: { x: number; y: number; villageId: number }[] = []
+  const wolfBirths: { x: number; y: number }[] = []
   for (const c of world.creatures) {
     if (c.life <= 0) continue
     let deathCause: DeathCause | null = null
@@ -345,10 +348,45 @@ export function simulate(world: World, dt = STEP): void {
         c.breedCooldown = mate.breedCooldown = 105 + world.random.next() * 45
       }
     }
+    if (c.kind === 'human' && c.villageId && c.age > 40 && c.age < MAX_AGE.human * 0.72 && c.energy > 70 && c.breedCooldown === 0 && world.creatures.length + humanBirths.length < MAX_AGENTS) {
+      const village = world.villages.find(v => v.id === c.villageId)
+      const villagers = village ? world.creatures.filter(o => o.villageId === village.id && o.life > 0) : []
+      const needsHeir = villagers.some(o => o.age > MAX_AGE.human * 0.62)
+      if (village && village.food > 40 && (villagers.length < 18 || (needsHeir && villagers.length < 22))) {
+        const mate = villagers.find(o => o.id !== c.id && o.age > 40 && o.age < MAX_AGE.human * 0.72 && o.breedCooldown === 0 && o.energy > 65)
+        if (mate && world.random.next() < (needsHeir ? 0.08 : 0.045)) {
+          humanBirths.push({ x: village.x, y: village.y, villageId: village.id })
+          c.energy -= 12; mate.energy -= 8; village.food -= 8
+          c.breedCooldown = mate.breedCooldown = needsHeir ? 90 + world.random.next() * 40 : 180 + world.random.next() * 60
+        }
+      }
+    }
+    if (c.kind === 'wolf' && world.population.wolf < 10 && c.age > 30 && c.energy > 78 && c.breedCooldown === 0 && world.creatures.length + wolfBirths.length < MAX_AGENTS) {
+      const mate = world.spatial.nearby(c.x, c.y, 6).find(o => o.kind === 'wolf' && o.id !== c.id && o.energy > 70 && o.breedCooldown === 0 && o.age > 30)
+      if (mate && world.random.next() < 0.05) {
+        wolfBirths.push({ x: tx, y: ty })
+        c.energy -= 18; mate.energy -= 12
+        c.breedCooldown = mate.breedCooldown = 220 + world.random.next() * 80
+      }
+    }
   }
   world.creatures = world.creatures.filter(c => c.life > 0)
   for (const birth of births) {
     if (world.spawn('rabbit', birth.x, birth.y)) world.recordEvent('birth', birth.x + 0.5, birth.y + 0.5, 'rabbit')
+  }
+  for (const birth of humanBirths) {
+    const child = world.spawn('human', birth.x, birth.y)
+    if (child) {
+      child.villageId = birth.villageId
+      child.task = 'gathering'
+      child.activity = 'working'
+      child.age = 0
+      child.breedCooldown = 55
+      world.recordEvent('birth', child.x, child.y, 'human')
+    }
+  }
+  for (const birth of wolfBirths) {
+    if (world.spawn('wolf', birth.x, birth.y)) world.recordEvent('birth', birth.x + 0.5, birth.y + 0.5, 'wolf')
   }
   if (world.tick % 20 === 0) {
     const next: typeof world.fires = []
