@@ -169,11 +169,13 @@ export class Renderer {
     for (const village of world.villages) {
       if (village.x < left - 7 || village.x > right + 7 || village.y < top - 7 || village.y > bottom + 7) continue
       const px = (village.x + 0.5) * TILE, py = (village.y + 0.5) * TILE
+      const atWar = world.villages.some(o => o.id !== village.id && world.isAtWar(village, o.id))
       ctx.save()
       ctx.fillStyle = village.color + '18'
       ctx.beginPath(); ctx.arc(px, py, 6.5 * TILE, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = village.color + 'b8'; ctx.lineWidth = 1.25
-      ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(px, py, 6.5 * TILE, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
+      ctx.strokeStyle = atWar ? '#c45c3ab8' : village.color + 'b8'
+      ctx.lineWidth = atWar ? 1.6 : 1.25
+      ctx.setLineDash(atWar ? [3, 3] : [5, 4]); ctx.beginPath(); ctx.arc(px, py, 6.5 * TILE, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
       ctx.fillStyle = '#1b3030d8'; ctx.fillRect(px - 4, py - 22, 9, 18)
       ctx.fillStyle = village.color; ctx.fillRect(px + 4, py - 22, 10, 7)
       ctx.fillStyle = '#fff0bc'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'

@@ -10,6 +10,7 @@ export interface Snapshot {
   tick: number
   randomState: number
   nextId: number
+  nextVillageId?: number
   tiles: World['tiles']
   vegetation: number[]
   moisture: number[]
@@ -34,7 +35,7 @@ export interface Snapshot {
 export function snapshot(world: World): Snapshot {
   return {
     format: 'mundi', version: 1, seed: world.seed, width: world.width, height: world.height,
-    tick: world.tick, randomState: world.random.state, nextId: world.nextId,
+    tick: world.tick, randomState: world.random.state, nextId: world.nextId, nextVillageId: world.nextVillageId,
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
     elevation: Array.from(world.elevation), surfaceWater: Array.from(world.surfaceWater),
     weather: world.weather, weatherUntil: world.weatherUntil, windAngle: world.windAngle, windStrength: world.windStrength,
@@ -46,6 +47,7 @@ export function snapshot(world: World): Snapshot {
       knowledge: [...v.knowledge],
       tech: [...v.tech],
       progress: { ...v.progress },
+      relations: { ...v.relations },
     })),
     buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), events: world.events.map(e => ({ ...e })), populationHistory: world.populationHistory.map(p => ({ ...p })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
@@ -91,7 +93,7 @@ export function restore(input: unknown): World {
     const intent = c.intent === undefined ? 'none' : choice(c.intent, ['none', 'foraging', 'sheltering', 'migrating', 'fleeing', 'resting', 'stalking', 'hunting'] as AnimalIntent[])
     const intentReason = c.intentReason === undefined ? 'none' : choice(c.intentReason, ['none', 'danger', 'fire', 'water', 'food', 'habitat', 'prey', 'rest'] as AnimalReason[])
     const rawTask = c.task === undefined ? 'idle' : c.task
-    const task: HumanTask = rawTask === 'gathering' ? 'foraging' : choice(rawTask, ['foraging', 'hunting', 'lumber', 'mining', 'building', 'fishing', 'idle'] as HumanTask[])
+    const task: HumanTask = rawTask === 'gathering' ? 'foraging' : choice(rawTask, ['foraging', 'hunting', 'lumber', 'mining', 'building', 'fishing', 'raiding', 'idle'] as HumanTask[])
     return {
       id, kind, x: number(c.x, 0, WORLD_W - 0.000001), y: number(c.y, 0, WORLD_H - 0.000001),
       vx: number(c.vx, -1, 1), vy: number(c.vy, -1, 1), life: number(c.life, 0, MAX_HEALTH[kind]),
@@ -127,6 +129,14 @@ export function restore(input: unknown): World {
     }
     const knowledge = v.knowledge === undefined ? (['foraging'] as KnowledgeId[]) : list(v.knowledge, 12).map(id => choice(id, knowledgeOptions))
     const tech = v.tech === undefined ? ([] as TechId[]) : list(v.tech, 12).map(id => choice(id, techOptions))
+    const relations: Record<number, number> = {}
+    if (v.relations !== undefined && v.relations !== null && typeof v.relations === 'object' && !Array.isArray(v.relations)) {
+      for (const [key, value] of Object.entries(v.relations as Record<string, unknown>)) {
+        const id = Number(key)
+        if (!Number.isSafeInteger(id) || id < 1 || id > 1000) continue
+        relations[id] = number(value, 0, 100)
+      }
+    }
     return {
       id: number(v.id, 1, 1000, true), name: typeof v.name === 'string' ? v.name.slice(0, 40) : 'Aldea',
       x: number(v.x, 0, WORLD_W - 1, true), y: number(v.y, 0, WORLD_H - 1, true),
@@ -134,7 +144,7 @@ export function restore(input: unknown): World {
       food: number(v.food, 0, 1e6), wood: number(v.wood, 0, 1e6), stone: number(v.stone, 0, 1e6),
       members: list(v.members, MAX_AGENTS).map(id => number(id, 1, Number.MAX_SAFE_INTEGER, true)),
       buildingQueue: list(v.buildingQueue, 8).map(type => choice(type, ['home', 'storehouse', 'farm', 'sawmill'] as const)),
-      knowledge, tech, progress,
+      knowledge, tech, progress, relations,
     }
   })
   const buildings = data.buildings === undefined ? [] : list(data.buildings, 120).map(raw => {
@@ -155,7 +165,7 @@ export function restore(input: unknown): World {
     const e = object(raw)
     return {
       id: number(e.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
-      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze', 'discovery', 'research'] as const),
+      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze', 'discovery', 'research', 'founding', 'war', 'raid'] as const),
       x: number(e.x, 0, WORLD_W - 0.000001), y: number(e.y, 0, WORLD_H - 0.000001), tick: number(e.tick, 0, 1e12, true),
       creature: e.creature === undefined ? undefined : choice(e.creature, ['human', 'rabbit', 'wolf'] as const),
       cause: e.cause === undefined ? undefined : choice(e.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque', 'frio', 'calor'] as const),
@@ -202,6 +212,10 @@ export function restore(input: unknown): World {
   world.tick = number(data.tick, 0, 1e12, true)
   world.random.state = number(data.randomState, 0, 0xffffffff, true)
   world.nextId = number(data.nextId, Math.max(0, ...ids, ...events.map(e => e.id)) + 1, Number.MAX_SAFE_INTEGER, true)
+  const maxVillageId = villages.reduce((m, v) => Math.max(m, v.id), 0)
+  world.nextVillageId = data.nextVillageId === undefined
+    ? maxVillageId + 1
+    : number(data.nextVillageId, maxVillageId + 1, Number.MAX_SAFE_INTEGER, true)
   world.refreshTemperature()
   world.recount()
   world.spatial.rebuild(world.creatures)
