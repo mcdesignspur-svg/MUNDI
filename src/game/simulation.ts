@@ -79,13 +79,14 @@ function damage(target: Creature, amount: number): boolean {
 function thermalStress(world: World, c: Creature): DeathCause | null {
   const temp = world.temperatureAt(Math.floor(c.x), Math.floor(c.y))
   const band = COMFORT[c.kind]
-  const shelter = world.get(Math.floor(c.x), Math.floor(c.y)) === 'forest' || !!c.villageId
-  if (temp < band.min - (shelter ? 6 : 0)) {
-    damage(c, (band.min - temp) * 0.35 * STEP)
+  const shelter = world.get(Math.floor(c.x), Math.floor(c.y)) === 'forest' || world.get(Math.floor(c.x), Math.floor(c.y)) === 'snow' || !!c.villageId
+  // Mild discomfort only slows life; lethal stress needs clear extremes.
+  if (temp < band.min - 4 - (shelter ? 5 : 0)) {
+    damage(c, Math.max(0.4, (band.min - 4 - temp) * 0.18) * STEP)
     return 'frio'
   }
-  if (temp > band.max + (shelter ? 4 : 0)) {
-    damage(c, (temp - band.max) * 0.28 * STEP)
+  if (temp > band.max + 4 + (shelter ? 3 : 0)) {
+    damage(c, Math.max(0.4, (temp - band.max - 4) * 0.15) * STEP)
     return 'calor'
   }
   return null

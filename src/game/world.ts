@@ -441,8 +441,8 @@ export class World {
   /** Recompute local temperatures from elevation, latitude, season, weather and sun. */
   refreshTemperature(): void {
     const season = this.season()
-    const base = season === 'summer' ? 26 : season === 'winter' ? 2 : season === 'spring' ? 14 : 10
-    const weatherBias = this.weather === 'drought' ? 4 : this.weather === 'storm' ? -3 : this.weather === 'rain' ? -1.5 : 0
+    const base = season === 'summer' ? 24 : season === 'winter' ? 6 : season === 'spring' ? 16 : 12
+    const weatherBias = this.weather === 'drought' ? 3.5 : this.weather === 'storm' ? -2.5 : this.weather === 'rain' ? -1.2 : 0
     const solar = this.solarFactor()
     for (let y = 0; y < this.height; y++) {
       const latitude = 1 - y / (this.height - 1)
@@ -450,14 +450,16 @@ export class World {
         const index = this.index(x, y)
         const elev = this.elevation[index]!
         const biome = this.tiles[index]!
-        let temp = base + weatherBias + (latitude - 0.5) * 10 + (solar - 0.85) * 8 - elev * 0.28
-        if (biome === 'snow') temp -= 4
-        if (biome === 'sand') temp += 2.5
-        if (biome === 'forest') temp -= 1.2
-        if (biome === 'lava') temp += 18
-        if (biome === 'water' || biome === 'deepWater') temp -= 1.5
-        if (this.surfaceWater[index]! > 20) temp -= 1
-        this.temperature[index] = Math.max(-18, Math.min(48, temp))
+        // Lapse only above foothills so valleys stay temperate and peaks feel alpine.
+        const altitudeCooling = Math.max(0, elev - 48) * 0.22
+        let temp = base + weatherBias + (latitude - 0.45) * 6 + (solar - 0.75) * 7 - altitudeCooling
+        if (biome === 'snow') temp -= 5
+        if (biome === 'sand') temp += 3
+        if (biome === 'forest') temp -= 1
+        if (biome === 'lava') temp += 16
+        if (biome === 'water' || biome === 'deepWater') temp -= 1
+        if (this.surfaceWater[index]! > 20) temp -= 0.8
+        this.temperature[index] = Math.max(-12, Math.min(46, temp))
       }
     }
   }
@@ -567,7 +569,7 @@ export class World {
         this.touch(x, y)
         continue
       }
-      if ((biome === 'grass' || biome === 'forest') && temp < -4 && elev > 55 && this.random.next() < 0.025) {
+      if ((biome === 'grass' || biome === 'forest') && temp < -6 && elev > 62 && this.random.next() < 0.02) {
         this.tiles[index] = 'snow'
         this.vegetation[index] = 0
         this.touch(x, y)
