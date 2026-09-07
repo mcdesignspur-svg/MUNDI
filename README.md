@@ -1,6 +1,6 @@
 # MUNDI
 
-Simulador de mundos en el navegador con física ecológica creíble y aldeas que aprenden.
+Simulador de mundos en el navegador: motor dios-juego con emergencia sistémica (clima, logística, diplomacia, dinastías y profecías).
 
 ## Jugar
 
@@ -11,27 +11,31 @@ npm run dev
 
 Abre la URL de Vite (por defecto `http://localhost:5173`).
 
-## Qué lo hace realista
+## Arquitectura del motor
 
-- **Elevación y ríos** — el mapa guarda altura; los ríos se tallan cuesta abajo al generar el mundo
-- **Temperatura local** — latitud, altitud, estación, sol y clima definen °C por celda
-- **Hidrología** — la lluvia crea escorrentía, inunda valles bajos y alimenta humedad
-- **Día / noche** — lobos cazan de noche, conejos se refugian, humanos descansan; el mapa se tiñe
-- **Viento y tormentas** — el fuego se propaga a favor del viento; los rayos pueden prender
-- **Sucesión de biomas** — sequía → arena, frío → nieve, humedad + calor → bosque
-- **Cosecha real** — los aldeanos van a talar, minar, recolectar bayas, cazar y pescar; el stock solo sube al actuar
-- **Conocimiento y tecnología** — la aldea desbloquea saberes (caza, carpintería…) y tech (herramientas, granja…) al cumplir requisitos
+- **Simulación pura vs presentación** — `simulate()` + `SimulationEngine` corren headless/fast-forward sin el renderer
+- **Capas de rejilla** — terreno, humedad, temperatura, vegetación, elevación/recursos + autómatas (agua, fuego, estaciones)
+- **Facciones y casus belli** — hostilidad emergente por escasez, fronteras, cultura y religión
+- **Logística física** — rutas A* y caravanas; un corte de ruta provoca déficit
+- **Dinastías** — gobernantes, herederos, sucesión y alianzas por matrimonio
+- **Cultura** — creencias que mutan con incendios, hambrunas, guerras y cataclismos
+- **Utility AI** — gobernantes eligen políticas; aldeanos usan colas de trabajo/FSM
+- **Herramientas divinas** — pinceles de calor/humedad/altura/fertilidad sobre el estado simulado
+- **Profecías** — motor `IF [condición] THEN [acción]`
+- **Debug** — capas de coste de ruta e influencia política
+
+Verificación headless:
+
+```bash
+npm run verify:engine
+```
 
 ## Controles
 
-- **Biomas** — pinta océano, agua, arena, hierba, bosque, montaña o nieve
-- **Vida** — spawnea humanos, conejos y lobos
-- **Desastres** — fuego (sigue el viento), meteorito, lluvia (apaga y encharca)
-- **Capas** — alimento, humedad, fertilidad, temperatura, elevación, peligros
-- **Inspector** — muestra tarea, reservas y progreso de saberes/tecnologías de la aldea
-- **Rueda** — zoom
-- **Espacio + arrastrar** / herramienta Mano / clic derecho — pan
-- **Pincel / Velocidad / Pausa / Mis mundos** — barra inferior
+- **Terreno / Fuerzas / Vida / Poderes** — pinta biomas, capas físicas, spawns y desastres
+- **Capas** — alimento, humedad, fertilidad, temperatura, elevación, peligros, coste de ruta, influencia
+- **Inspector** — tarea, reservas, relaciones, creencias y progreso
+- **Rueda** — zoom · **Espacio + arrastrar** — pan · **Velocidad / Pausa / Mis mundos**
 
 ## Stack
 

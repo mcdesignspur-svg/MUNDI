@@ -1,7 +1,9 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, emptyProgress, type Biome, type Building, type Creature, type CreatureKind, type DayPhase, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_AGE, MAX_HEALTH, WALKABLE, emptyProgress, type Biome, type Building, type Creature, type CreatureKind, type DayPhase, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
 import { evaluateKnowledge, evaluateTech, foodUpkeep, hasTech, techAllowsBuilding } from './progression'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
+import { engine } from './core/engine'
+import { MAX_VILLAGES, MIN_FOUND_DISTANCE, VILLAGE_STYLES, ensureRelation } from './systems/faction'
 
 export const WORLD_W = 96
 export const WORLD_H = 96
@@ -56,6 +58,8 @@ export class World {
   temperature: Float32Array
   /** Transient surface water from storms and runoff (0–100). */
   surfaceWater: Float32Array
+  /** Double-buffer for hydrology to avoid per-tick Float32Array allocations. */
+  private surfaceWaterNext: Float32Array
   seed = ''
   random = new Random(1)
   spatial = new SpatialIndex()
@@ -71,6 +75,7 @@ export class World {
   fires: FireCell[] = []
   meteors: MeteorFx[] = []
   nextId = 1
+  nextVillageId = 1
   tick = 0
   weather: Weather = 'clear'
   weatherUntil = 0
@@ -78,6 +83,8 @@ export class World {
   windAngle = 0
   windStrength = 0.35
   population = { human: 0, rabbit: 0, wolf: 0 }
+  static readonly MAX_VILLAGES = MAX_VILLAGES
+  static readonly MIN_FOUND_DISTANCE = MIN_FOUND_DISTANCE
 
   constructor(seed: string | number = 'MUNDI-ALBOR') {
     this.tiles = new Array(this.width * this.height)
@@ -87,6 +94,7 @@ export class World {
     this.elevation = new Float32Array(this.width * this.height)
     this.temperature = new Float32Array(this.width * this.height)
     this.surfaceWater = new Float32Array(this.width * this.height)
+    this.surfaceWaterNext = new Float32Array(this.width * this.height)
     this.generate(seed)
   }
 
@@ -174,6 +182,7 @@ export class World {
     this.fires = []
     this.meteors = []
     this.nextId = 1
+    this.nextVillageId = 1
     this.tick = 0
     this.weather = 'clear'
     this.weatherUntil = 0
@@ -184,6 +193,8 @@ export class World {
     for (let i = 0; i < 36; i++) this.terrainVersions[i]++
     this.refreshTemperature()
     this.recount()
+    engine.attach(this)
+    engine.hydrateFromVillages(this.villages)
   }
 
   /** Trace a few downhill streams so continents start with believable rivers. */
@@ -385,9 +396,9 @@ export class World {
 
   private assignVillageTasks(village: Village, members: Creature[], active: Building | undefined): void {
     const nearWater = this.waterNear(village.x, village.y)
-    // Always keep some gatherers, woodcutters and miners so knowledge can progress.
+    const workers = members.filter(c => c.task !== 'raiding')
     const needs: { task: HumanTask; weight: number }[] = []
-    if (active) needs.push({ task: 'building', weight: Math.min(members.length, 2) })
+    if (active) needs.push({ task: 'building', weight: Math.min(workers.length, 2) })
     needs.push({ task: 'foraging', weight: village.food < 40 ? 3 : 1 })
     needs.push({ task: 'hunting', weight: village.food < 35 ? 2 : 1 })
     if (nearWater) needs.push({ task: 'fishing', weight: village.food < 45 ? 2 : 1 })
@@ -395,8 +406,8 @@ export class World {
     needs.push({ task: 'mining', weight: village.stone < 18 ? 2 : 1 })
     const slots: HumanTask[] = []
     for (const need of needs) for (let i = 0; i < need.weight; i++) slots.push(need.task)
-    for (let i = 0; i < members.length; i++) {
-      const human = members[i]!
+    for (let i = 0; i < workers.length; i++) {
+      const human = workers[i]!
       human.task = slots[i % slots.length] ?? 'foraging'
       human.activity = 'working'
     }
@@ -417,35 +428,165 @@ export class World {
     }
   }
 
-  advanceVillages(): void {
-    const adults = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12)
-    if (!this.villages.length && adults.length >= 5) {
-      let site: { x: number; y: number } | undefined = adults.find(c => this.get(Math.floor(c.x), Math.floor(c.y)) === 'grass' && this.waterNear(Math.floor(c.x), Math.floor(c.y)))
-      if (!site) {
-        for (let y = 8; y < this.height - 8 && !site; y++) for (let x = 8; x < this.width - 8; x++) {
-          if (this.get(x, y) === 'grass' && this.vegetationAt(x, y) > 45 && this.waterNear(x, y)) { site = { x, y }; break }
-        }
-      }
-      if (site) {
-        const members = adults.slice(0, Math.min(8, adults.length))
-        const village: Village = {
-          id: 1, name: 'Aldea del Roble', x: Math.floor(site.x), y: Math.floor(site.y), color: '#e7bd66',
-          food: 48, wood: 12, stone: 5, members: members.map(c => c.id), buildingQueue: ['home'],
-          knowledge: ['foraging'], tech: [], progress: emptyProgress(),
-        }
-        this.villages.push(village)
-        for (const c of members) { c.villageId = village.id; c.task = 'foraging'; c.activity = 'working' }
-        this.recordEvent('discovery', village.x + 0.5, village.y + 0.5, undefined, undefined, 'foraging')
-        this.revision++
+  private villageNameAndColor(index: number): { name: string; color: string } {
+    return VILLAGE_STYLES[index % VILLAGE_STYLES.length]!
+  }
+
+  private createVillage(x: number, y: number, members: Creature[], opts?: {
+    food?: number; wood?: number; stone?: number
+    knowledge?: Village['knowledge']; tech?: Village['tech']; buildingQueue?: Village['buildingQueue']
+  }): Village {
+    const style = this.villageNameAndColor(this.villages.length)
+    const village: Village = {
+      id: this.nextVillageId++,
+      name: style.name,
+      x: Math.floor(x),
+      y: Math.floor(y),
+      color: style.color,
+      food: opts?.food ?? 48,
+      wood: opts?.wood ?? 12,
+      stone: opts?.stone ?? 5,
+      members: members.map(c => c.id),
+      buildingQueue: opts?.buildingQueue ? [...opts.buildingQueue] : ['home'],
+      knowledge: opts?.knowledge ? [...opts.knowledge] : ['foraging'],
+      tech: opts?.tech ? [...opts.tech] : [],
+      progress: emptyProgress(),
+      relations: {},
+    }
+    for (const other of this.villages) {
+      ensureRelation(engine.factions, village.id, other.id)
+      village.relations[other.id] = 0
+      other.relations[village.id] = 0
+    }
+    this.villages.push(village)
+    for (const c of members) {
+      c.villageId = village.id
+      c.task = 'foraging'
+      c.activity = 'working'
+    }
+    this.recordEvent('founding', village.x + 0.5, village.y + 0.5, undefined, undefined, village.name)
+    if (!village.knowledge.includes('foraging')) village.knowledge.unshift('foraging')
+    if (!opts?.knowledge) this.recordEvent('discovery', village.x + 0.5, village.y + 0.5, undefined, undefined, 'foraging')
+    engine.onVillageFounded(this, village)
+    this.revision++
+    return village
+  }
+
+  private findFoundingSiteNear(cx: number, cy: number, radius = 10): { x: number; y: number } | null {
+    let best: { x: number; y: number; score: number } | null = null
+    for (let y = Math.max(4, Math.floor(cy) - radius); y <= Math.min(this.height - 5, Math.floor(cy) + radius); y++) {
+      for (let x = Math.max(4, Math.floor(cx) - radius); x <= Math.min(this.width - 5, Math.floor(cx) + radius); x++) {
+        const biome = this.get(x, y)
+        if (biome !== 'grass' && biome !== 'forest' && biome !== 'sand') continue
+        if (this.nearestVillageDistance(x + 0.5, y + 0.5) < World.MIN_FOUND_DISTANCE) continue
+        const water = this.waterNear(x, y) ? 8 : 0
+        const veg = this.vegetationAt(x, y) * 0.04
+        const dist = Math.hypot(x + 0.5 - cx, y + 0.5 - cy)
+        const score = water + veg + (biome === 'grass' ? 4 : 1) - dist * 0.2
+        if (!best || score > best.score) best = { x, y, score }
       }
     }
+    return best
+  }
+
+  private recruitNearbyUnsettled(): void {
+    const unsettled = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12 && c.life > 0)
+    for (const human of unsettled) {
+      let nearest: Village | undefined
+      let nearestDist = Infinity
+      for (const village of this.villages) {
+        const d = Math.hypot(village.x + 0.5 - human.x, village.y + 0.5 - human.y)
+        if (d < nearestDist) { nearest = village; nearestDist = d }
+      }
+      if (!nearest || nearestDist > 9) continue
+      const pop = this.creatures.filter(c => c.villageId === nearest!.id && c.life > 0).length
+      if (pop >= 16) continue
+      if (this.random.next() > 0.35) continue
+      human.villageId = nearest.id
+      human.task = 'foraging'
+      human.activity = 'working'
+    }
+  }
+
+  private tryFoundFromUnsettled(): void {
+    if (this.villages.length >= World.MAX_VILLAGES) return
+    const unsettled = this.creatures.filter(c => c.kind === 'human' && !c.villageId && c.age >= 12 && c.life > 0)
+    if (unsettled.length < 4) return
+    const order = [...unsettled]
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(this.random.next() * (i + 1))
+      ;[order[i], order[j]] = [order[j]!, order[i]!]
+    }
+    for (const seed of order) {
+      if (this.nearestVillageDistance(seed.x, seed.y) < World.MIN_FOUND_DISTANCE && this.villages.length > 0) continue
+      const cluster = unsettled.filter(c => Math.hypot(c.x - seed.x, c.y - seed.y) < 10).slice(0, 8)
+      if (cluster.length < 4) continue
+      const cx = cluster.reduce((s, c) => s + c.x, 0) / cluster.length
+      const cy = cluster.reduce((s, c) => s + c.y, 0) / cluster.length
+      const site = this.findFoundingSiteNear(cx, cy, 12)
+        ?? (this.villages.length === 0 && this.get(Math.floor(seed.x), Math.floor(seed.y)) === 'grass'
+          ? { x: Math.floor(seed.x), y: Math.floor(seed.y) }
+          : null)
+      if (!site) continue
+      this.createVillage(site.x, site.y, cluster)
+      return
+    }
+  }
+
+  private tryVillageFission(): void {
+    if (this.villages.length >= World.MAX_VILLAGES) return
+    for (const parent of [...this.villages]) {
+      if (this.villages.length >= World.MAX_VILLAGES) return
+      const members = this.creatures.filter(c => c.villageId === parent.id && c.life > 0)
+      if (members.length < 12 || parent.food < 45 || parent.wood < 14) continue
+      const pressure = members.length - 11
+      if (this.random.next() > 0.04 + pressure * 0.015) continue
+      const settlers = members
+        .filter(c => c.age >= 16 && c.age < MAX_AGE.human * 0.75 && c.energy > 55 && c.task !== 'raiding')
+        .slice(0, 4 + Math.floor(this.random.next() * 3))
+      if (settlers.length < 4) continue
+      const angle = this.random.next() * Math.PI * 2
+      const dist = World.MIN_FOUND_DISTANCE + 4 + this.random.next() * 10
+      const site = this.findFoundingSiteNear(parent.x + Math.cos(angle) * dist, parent.y + Math.sin(angle) * dist, 14)
+      if (!site) continue
+      const foodShare = Math.min(22, parent.food * 0.28)
+      const woodShare = Math.min(10, parent.wood * 0.28)
+      parent.food -= foodShare
+      parent.wood -= woodShare
+      this.createVillage(site.x, site.y, settlers, {
+        food: foodShare + 8,
+        wood: woodShare + 4,
+        stone: Math.min(4, parent.stone * 0.2),
+        knowledge: parent.knowledge.filter(k => k === 'foraging' || k === 'hunting' || k === 'woodcraft' || this.random.next() < 0.5),
+        tech: parent.tech.filter(() => this.random.next() < 0.35),
+        buildingQueue: ['home'],
+      })
+      for (const s of settlers) {
+        s.x = site.x + 0.5 + (this.random.next() - 0.5) * 2
+        s.y = site.y + 0.5 + (this.random.next() - 0.5) * 2
+      }
+      return
+    }
+  }
+
+  hostility(village: Village, otherId: number): number {
+    return engine.hostility(village.id, otherId)
+  }
+
+  isAtWar(village: Village, otherId: number): boolean {
+    return engine.atWar(village.id, otherId)
+  }
+
+  advanceVillages(): void {
+    this.tryFoundFromUnsettled()
+    this.recruitNearbyUnsettled()
+    this.tryVillageFission()
     const season = this.season()
     const farmBoost = season === 'spring' ? 1.35 : season === 'summer' ? 1.1 : season === 'autumn' ? 0.85 : 0.35
     for (const village of this.villages) {
       const members = this.creatures.filter(c => c.villageId === village.id && c.life > 0)
       village.members = members.map(c => c.id)
       if (!members.length) continue
-      // One night survived per full night window (~DAY_LENGTH minutes).
       if (this.dayPhase() === 'night' && Math.floor(this.tick / 20) % 24 === 0) village.progress.nights++
 
       const active = this.buildings.find(b => b.villageId === village.id && b.progress < 1)
@@ -462,7 +603,6 @@ export class World {
           village.progress.farmTicks++
         }
       }
-      // Resources from foraging/hunting/lumber/mining/fishing come from per-agent harvest in simulate().
       village.food = Math.max(0, village.food - foodUpkeep(village, members.length) + farmYield)
       for (const human of members) if (human.energy < 86 && village.food >= 1) { human.energy = Math.min(100, human.energy + 12); village.food -= 1 }
 
@@ -484,6 +624,29 @@ export class World {
       this.evaluateVillageProgress(village)
       this.revision++
     }
+  }
+
+  /** God-tool brushes that write raw simulation layer values. */
+  paintLayer(cx: number, cy: number, layer: 'heat' | 'humidity' | 'elevation' | 'fertility', amount: number, radius: number): void {
+    const r2 = radius * radius
+    for (let y = cy - radius; y <= cy + radius; y++) {
+      for (let x = cx - radius; x <= cx + radius; x++) {
+        if (!this.inBounds(x, y)) continue
+        const dx = x - cx, dy = y - cy
+        if (dx * dx + dy * dy > r2) continue
+        const i = this.index(x, y)
+        const falloff = 1 - Math.sqrt(dx * dx + dy * dy) / Math.max(1, radius)
+        const delta = amount * falloff
+        if (layer === 'heat') this.temperature[i] = Math.max(-12, Math.min(46, this.temperature[i]! + delta))
+        else if (layer === 'humidity') {
+          this.moisture[i] = Math.max(0, Math.min(100, this.moisture[i]! + delta))
+          if (delta > 0) this.surfaceWater[i] = Math.min(100, this.surfaceWater[i]! + delta * 0.35)
+        } else if (layer === 'elevation') this.elevation[i] = Math.max(0, Math.min(100, this.elevation[i]! + delta))
+        else this.fertility[i] = Math.max(0, Math.min(100, this.fertility[i]! + delta))
+        this.touch(x, y)
+      }
+    }
+    this.revision++
   }
 
   paintBrush(cx: number, cy: number, biome: Biome, radius: number): void {
@@ -618,7 +781,8 @@ export class World {
 
   /** Downhill runoff: excess surface water drains to lower neighbors and feeds rivers/floods. */
   updateHydrology(): void {
-    const next = new Float32Array(this.surfaceWater)
+    const next = this.surfaceWaterNext
+    next.set(this.surfaceWater)
     let flooded = 0
     for (let y = 1; y < this.height - 1; y++) {
       for (let x = 1; x < this.width - 1; x++) {
@@ -642,7 +806,9 @@ export class World {
         next[lowest] = Math.min(100, next[lowest]! + flow)
       }
     }
+    const swap = this.surfaceWater
     this.surfaceWater = next
+    this.surfaceWaterNext = swap
     for (let i = 0; i < this.tiles.length; i++) {
       if (this.surfaceWater[i]! > 72 && WALKABLE.has(this.tiles[i]!) && this.tiles[i] !== 'mountain' && this.tiles[i] !== 'snow') {
         const x = i % this.width, y = Math.floor(i / this.width)
@@ -656,7 +822,10 @@ export class World {
         } else this.moisture[i] = Math.min(100, this.moisture[i]! + 2)
       }
     }
-    if (flooded > 0) this.recordEvent('flood', this.width / 2, this.height / 2)
+    if (flooded > 0) {
+      this.recordEvent('flood', this.width / 2, this.height / 2)
+      engine.bus.emit('flood', this.tick, { x: this.width / 2, y: this.height / 2, tiles: flooded })
+    }
   }
 
   /** Temperature + moisture push biomes toward believable successors. */
@@ -709,7 +878,10 @@ export class World {
         this.touch(x, y)
       }
     }
-    if (froze > 4) this.recordEvent('freeze', this.width / 2, this.height / 2)
+    if (froze > 4) {
+      this.recordEvent('freeze', this.width / 2, this.height / 2)
+      engine.bus.emit('freeze', this.tick, { tiles: froze })
+    }
   }
 
   graze(x: number, y: number, amount: number): number {

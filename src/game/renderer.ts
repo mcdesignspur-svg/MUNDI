@@ -3,6 +3,9 @@ import type { GameState } from './commands'
 import { seedNumber, tileNoise } from './random'
 import { CHUNK, TILE, type World } from './world'
 import type { Biome } from './types'
+import { sharedPathfinder } from './core/pathfinding'
+import { sharedInfluence } from './systems/influence'
+import { engine } from './core/engine'
 
 const COLORS: Record<Biome, string> = {
   deepWater: '#164858', water: '#297987', sand: '#d5bc7b', grass: '#6d994e',
@@ -162,18 +165,46 @@ export class Renderer {
           const flood = world.surfaceWaterAt(x, y) > 40
           color = burning?.has(world.index(x, y)) || biome === 'lava' ? 'rgba(243, 76, 43, 0.76)' : flood ? 'rgba(64, 140, 220, 0.55)' : biome === 'ash' ? 'rgba(116, 93, 75, 0.6)' : 'rgba(24, 62, 71, 0.26)'
         }
+        if (state.overlay === 'pathCost') {
+          const cost = sharedPathfinder.pathCostAt(x, y, world.width) / 8
+          color = cost <= 0 ? 'rgba(20, 20, 28, 0.55)' : `rgba(${Math.round(40 + cost * 200)}, ${Math.round(180 - cost * 120)}, ${Math.round(90 - cost * 40)}, ${0.15 + cost * 0.55})`
+        }
+        if (state.overlay === 'influence') {
+          const inf = Math.min(1, sharedInfluence.at(x, y) / 28)
+          const owner = sharedInfluence.ownerAt(x, y)
+          const village = world.villages.find(v => v.id === owner)
+          if (inf > 0.04 && village) {
+            const r = parseInt(village.color.slice(1, 3), 16) || 180
+            const g = parseInt(village.color.slice(3, 5), 16) || 160
+            const b = parseInt(village.color.slice(5, 7), 16) || 100
+            color = `rgba(${r}, ${g}, ${b}, ${0.12 + inf * 0.5})`
+          } else color = 'rgba(18, 28, 32, 0.2)'
+        }
         ctx.fillStyle = color
         ctx.fillRect(x * TILE, y * TILE, TILE, TILE)
       }
     }
+    // Trade caravan markers (presentation only).
+    for (const caravan of engine.trade.caravans) {
+      if (!caravan.alive) continue
+      if (caravan.x < left - 1 || caravan.x > right + 1 || caravan.y < top - 1 || caravan.y > bottom + 1) continue
+      ctx.fillStyle = '#f0d78a'
+      ctx.beginPath()
+      ctx.arc(caravan.x * TILE, caravan.y * TILE, 3.2, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = '#5a4020'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
     for (const village of world.villages) {
       if (village.x < left - 7 || village.x > right + 7 || village.y < top - 7 || village.y > bottom + 7) continue
       const px = (village.x + 0.5) * TILE, py = (village.y + 0.5) * TILE
+      const atWar = world.villages.some(o => o.id !== village.id && world.isAtWar(village, o.id))
       ctx.save()
       ctx.fillStyle = village.color + '18'
-      ctx.beginPath(); ctx.arc(px, py, 6.5 * TILE, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = village.color + 'b8'; ctx.lineWidth = 1.25
-      ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(px, py, 6.5 * TILE, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
+      ctx.beginPath(); ctx.arc(px, py, (atWar ? 5.2 : 6.5) * TILE, 0, Math.PI * 2); ctx.fill()
+      ctx.strokeStyle = atWar ? '#c45a3ab8' : village.color + 'b8'; ctx.lineWidth = atWar ? 2 : 1.25
+      ctx.setLineDash(atWar ? [] : [5, 4]); ctx.beginPath(); ctx.arc(px, py, (atWar ? 5.2 : 6.5) * TILE, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
       ctx.fillStyle = '#1b3030d8'; ctx.fillRect(px - 4, py - 22, 9, 18)
       ctx.fillStyle = village.color; ctx.fillRect(px + 4, py - 22, 10, 7)
       ctx.fillStyle = '#fff0bc'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'

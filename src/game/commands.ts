@@ -22,6 +22,10 @@ export function dispatch(world: World, state: GameState, command: GameCommand): 
   }
   const { tool, x, y, radius } = command
   if (tool.startsWith('paint-')) world.paintBrush(x, y, tool.slice(6) as Biome, radius)
+  else if (tool === 'brush-heat') world.paintLayer(x, y, 'heat', 8, radius)
+  else if (tool === 'brush-humidity') world.paintLayer(x, y, 'humidity', 18, radius)
+  else if (tool === 'brush-elevation') world.paintLayer(x, y, 'elevation', 10, radius)
+  else if (tool === 'brush-fertility') world.paintLayer(x, y, 'fertility', 16, radius)
   else if (tool.startsWith('spawn-')) {
     const c = world.spawn(tool.slice(6) as CreatureKind, x, y)
     if (!c) return world.creatures.length >= 300 ? 'Este mundo alcanzó el límite de 300 seres.' : 'La vida necesita tierra firme.'

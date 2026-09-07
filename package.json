@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:engine": "npx --yes tsx scripts/verify-god-engine.ts"
   },
   "devDependencies": {
     "typescript": "~5.9.3",

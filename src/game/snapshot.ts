@@ -1,15 +1,17 @@
 import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, emptyProgress, type AnimalIntent, type AnimalReason, type Building, type Creature, type DeathRecord, type HumanTask, type KnowledgeId, type PopulationSample, type TechId, type Village, type Weather, type WorldEvent } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
+import { engine } from './core/engine'
 
 export interface Snapshot {
   format: 'mundi'
-  version: 1
+  version: 2
   seed: string
   width: number
   height: number
   tick: number
   randomState: number
   nextId: number
+  nextVillageId?: number
   tiles: World['tiles']
   vegetation: number[]
   moisture: number[]
@@ -29,12 +31,13 @@ export interface Snapshot {
   fires: World['fires']
   meteors: World['meteors']
   rainEffects: World['rainEffects']
+  systems?: ReturnType<typeof engine.serialize>
 }
 
 export function snapshot(world: World): Snapshot {
   return {
-    format: 'mundi', version: 1, seed: world.seed, width: world.width, height: world.height,
-    tick: world.tick, randomState: world.random.state, nextId: world.nextId,
+    format: 'mundi', version: 2, seed: world.seed, width: world.width, height: world.height,
+    tick: world.tick, randomState: world.random.state, nextId: world.nextId, nextVillageId: world.nextVillageId,
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
     elevation: Array.from(world.elevation), surfaceWater: Array.from(world.surfaceWater),
     weather: world.weather, weatherUntil: world.weatherUntil, windAngle: world.windAngle, windStrength: world.windStrength,
@@ -46,9 +49,11 @@ export function snapshot(world: World): Snapshot {
       knowledge: [...v.knowledge],
       tech: [...v.tech],
       progress: { ...v.progress },
+      relations: { ...v.relations },
     })),
     buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), events: world.events.map(e => ({ ...e })), populationHistory: world.populationHistory.map(p => ({ ...p })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
+    systems: engine.serialize(),
   }
 }
 
@@ -75,7 +80,7 @@ function choice<T extends string>(value: unknown, options: readonly T[]): T {
 /** Validate into a fresh world; the active world is never touched on failure. */
 export function restore(input: unknown): World {
   const data = object(input)
-  if (data.format !== 'mundi' || data.version !== 1) throw new Error('Este archivo no es una partida MUNDI compatible (versión 1).')
+  if (data.format !== 'mundi' || (data.version !== 1 && data.version !== 2)) throw new Error('Este archivo no es una partida MUNDI compatible (versión 1–2).')
   if (data.width !== WORLD_W || data.height !== WORLD_H) throw new Error('El mapa debe ser de 96 × 96.')
   if (typeof data.seed !== 'string' || data.seed.length < 1 || data.seed.length > 64) throw new Error('La semilla no es válida.')
   const count = WORLD_W * WORLD_H
@@ -91,7 +96,7 @@ export function restore(input: unknown): World {
     const intent = c.intent === undefined ? 'none' : choice(c.intent, ['none', 'foraging', 'sheltering', 'migrating', 'fleeing', 'resting', 'stalking', 'hunting'] as AnimalIntent[])
     const intentReason = c.intentReason === undefined ? 'none' : choice(c.intentReason, ['none', 'danger', 'fire', 'water', 'food', 'habitat', 'prey', 'rest'] as AnimalReason[])
     const rawTask = c.task === undefined ? 'idle' : c.task
-    const task: HumanTask = rawTask === 'gathering' ? 'foraging' : choice(rawTask, ['foraging', 'hunting', 'lumber', 'mining', 'building', 'fishing', 'idle'] as HumanTask[])
+    const task: HumanTask = rawTask === 'gathering' ? 'foraging' : choice(rawTask, ['foraging', 'hunting', 'lumber', 'mining', 'building', 'fishing', 'raiding', 'idle'] as HumanTask[])
     return {
       id, kind, x: number(c.x, 0, WORLD_W - 0.000001), y: number(c.y, 0, WORLD_H - 0.000001),
       vx: number(c.vx, -1, 1), vy: number(c.vy, -1, 1), life: number(c.life, 0, MAX_HEALTH[kind]),
@@ -127,6 +132,12 @@ export function restore(input: unknown): World {
     }
     const knowledge = v.knowledge === undefined ? (['foraging'] as KnowledgeId[]) : list(v.knowledge, 12).map(id => choice(id, knowledgeOptions))
     const tech = v.tech === undefined ? ([] as TechId[]) : list(v.tech, 12).map(id => choice(id, techOptions))
+    const relations: Record<number, number> = {}
+    if (v.relations && typeof v.relations === 'object' && !Array.isArray(v.relations)) {
+      for (const [key, value] of Object.entries(v.relations as Record<string, unknown>)) {
+        relations[Number(key)] = number(value, 0, 100)
+      }
+    }
     return {
       id: number(v.id, 1, 1000, true), name: typeof v.name === 'string' ? v.name.slice(0, 40) : 'Aldea',
       x: number(v.x, 0, WORLD_W - 1, true), y: number(v.y, 0, WORLD_H - 1, true),
@@ -134,7 +145,7 @@ export function restore(input: unknown): World {
       food: number(v.food, 0, 1e6), wood: number(v.wood, 0, 1e6), stone: number(v.stone, 0, 1e6),
       members: list(v.members, MAX_AGENTS).map(id => number(id, 1, Number.MAX_SAFE_INTEGER, true)),
       buildingQueue: list(v.buildingQueue, 8).map(type => choice(type, ['home', 'storehouse', 'farm', 'sawmill'] as const)),
-      knowledge, tech, progress,
+      knowledge, tech, progress, relations,
     }
   })
   const buildings = data.buildings === undefined ? [] : list(data.buildings, 120).map(raw => {
@@ -151,11 +162,12 @@ export function restore(input: unknown): World {
       tick: number(d.tick, 0, 1e12, true),
     }
   })
+  const eventKinds = ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze', 'discovery', 'research', 'founding', 'war', 'raid', 'prophecy', 'trade', 'succession'] as const
   const events = data.events === undefined ? [] : list(data.events, 30).map(raw => {
     const e = object(raw)
     return {
       id: number(e.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
-      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze', 'discovery', 'research'] as const),
+      kind: choice(e.kind, eventKinds),
       x: number(e.x, 0, WORLD_W - 0.000001), y: number(e.y, 0, WORLD_H - 0.000001), tick: number(e.tick, 0, 1e12, true),
       creature: e.creature === undefined ? undefined : choice(e.creature, ['human', 'rabbit', 'wolf'] as const),
       cause: e.cause === undefined ? undefined : choice(e.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque', 'frio', 'calor'] as const),
@@ -201,9 +213,13 @@ export function restore(input: unknown): World {
   world.rainEffects = effects(data.rainEffects, 12, 2, 16)
   world.tick = number(data.tick, 0, 1e12, true)
   world.random.state = number(data.randomState, 0, 0xffffffff, true)
+  const maxVillageId = villages.reduce((m, v) => Math.max(m, v.id), 0)
+  world.nextVillageId = data.nextVillageId === undefined ? maxVillageId + 1 : number(data.nextVillageId, Math.max(1, maxVillageId + 1), Number.MAX_SAFE_INTEGER, true)
   world.nextId = number(data.nextId, Math.max(0, ...ids, ...events.map(e => e.id)) + 1, Number.MAX_SAFE_INTEGER, true)
   world.refreshTemperature()
   world.recount()
   world.spatial.rebuild(world.creatures)
+  engine.attach(world)
+  engine.restore(data.systems as ReturnType<typeof engine.serialize> | undefined, villages)
   return world
 }

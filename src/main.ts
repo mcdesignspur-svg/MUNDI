@@ -10,6 +10,7 @@ import { dispatch, type GameState } from './game/commands'
 import { snapshot, restore } from './game/snapshot'
 import { listWorlds, saveWorld, type SavedWorld, type Slot } from './game/storage'
 import { WorldAudio } from './game/audio'
+import { engine } from './game/core/engine'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 const icon = (name: string) => {
@@ -39,6 +40,12 @@ const groups: Record<string, Tool[]> = {
     { id: 'paint-forest', label: 'Bosque', color: '#315c37' },
     { id: 'paint-mountain', label: 'Montaña', color: '#7a8577' },
     { id: 'paint-snow', label: 'Nieve', color: '#dce6cf' },
+  ],
+  forces: [
+    { id: 'brush-heat', label: 'Calor', glyph: '▲' },
+    { id: 'brush-humidity', label: 'Humedad', glyph: '~' },
+    { id: 'brush-elevation', label: 'Altura', glyph: '▴' },
+    { id: 'brush-fertility', label: 'Fertilidad', glyph: '+' },
   ],
   life: [
     { id: 'spawn-human', label: 'Humano', sprite: 0 },
@@ -87,6 +94,8 @@ app.innerHTML = `
       <button data-overlay="temperature" aria-pressed="false"><i class="layer-swatch temperature"></i>Temperatura</button>
       <button data-overlay="elevation" aria-pressed="false"><i class="layer-swatch elevation"></i>Elevación</button>
       <button data-overlay="hazards" aria-pressed="false"><i class="layer-swatch hazards"></i>Peligros</button>
+      <button data-overlay="pathCost" aria-pressed="false"><i class="layer-swatch elevation"></i>Coste de ruta</button>
+      <button data-overlay="influence" aria-pressed="false"><i class="layer-swatch fertility"></i>Influencia</button>
     </div>
     <section id="events-panel" class="events-panel" aria-label="Acontecimientos del mundo" hidden>
       <div class="event-heading"><span class="eyebrow">Pulso del mundo</span><span id="event-count" class="event-count"></span></div>
@@ -114,6 +123,7 @@ app.innerHTML = `
       <div class="tool-header">
         <div class="category-tabs" role="tablist" aria-label="Herramientas">
           <button role="tab" id="tab-terrain" aria-controls="panel-terrain" aria-selected="true" data-group="terrain" class="active">Terreno</button>
+          <button role="tab" id="tab-forces" aria-controls="panel-forces" aria-selected="false" tabindex="-1" data-group="forces">Fuerzas</button>
           <button role="tab" id="tab-life" aria-controls="panel-life" aria-selected="false" tabindex="-1" data-group="life">Vida</button>
           <button role="tab" id="tab-powers" aria-controls="panel-powers" aria-selected="false" tabindex="-1" data-group="powers">Poderes</button>
         </div>
@@ -257,11 +267,22 @@ function updateInspector(): void {
     const health = Math.max(0, Math.round(c.life / MAX_HEALTH[c.kind] * 100)), hunger = Math.max(0, Math.min(100, Math.round(100 - c.energy)))
     const hungerLabel = hunger < 25 ? 'Saciado' : hunger < 55 ? 'Con hambre' : hunger < 80 ? 'Hambriento' : 'En inanición'
     const village = c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
+    const relations = village && world.villages.length > 1
+      ? world.villages.filter(o => o.id !== village.id).map(o => {
+        const h = Math.round(world.hostility(village, o.id))
+        return `${o.name}: ${h}${world.isAtWar(village, o.id) ? ' guerra' : ''}`
+      }).join(' · ')
+      : ''
+    const culture = village ? engine.culture.profiles.get(village.id) : undefined
+    const belief = culture
+      ? (Object.entries(culture.beliefs) as [string, number][]).sort((a, b) => b[1] - a[1])[0]
+      : undefined
+    const ruler = village ? engine.dynasty.rulers.get(village.id) : undefined
     $('inspector-content').innerHTML = `
-      <div class="inspector-identity"><span class="portrait row-${c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2}"></span><div><h2>${KIND_NAMES[c.kind]}</h2><span class="muted">Habitante #${c.id}</span></div></div>
+      <div class="inspector-identity"><span class="portrait row-${c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2}"></span><div><h2>${KIND_NAMES[c.kind]}</h2><span class="muted">Habitante #${c.id}${ruler === c.id ? ' · Gobernante' : ''}</span></div></div>
       <p class="activity"><span class="live-dot"></span>${ACTIVITY_NAMES[c.activity]}${c.kind !== 'human' && c.intentReason && c.intentReason !== 'none' ? ' · ' + ANIMAL_REASON_NAMES[c.intentReason] : ''}</p>
       <div class="vitals"><label>Salud <strong>${health}%</strong><meter min="0" max="100" value="${health}">${health}%</meter></label><label>Hambre <strong>${hunger}% · ${hungerLabel}</strong><meter class="hunger" min="0" max="100" value="${hunger}">${hunger}%</meter></label></div>
-      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div><div><dt>Temperatura</dt><dd>${Math.round(world.temperatureAt(Math.floor(c.x), Math.floor(c.y)))}°C</dd></div><div><dt>Hora</dt><dd>${DAY_PHASE_NAMES[world.dayPhase()]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']} · Reservas: ${Math.round(village.food)} comida, ${Math.round(village.wood)} madera, ${Math.round(village.stone)} piedra</p><p class="progress-note"><strong>Progreso</strong>${escapeHTML(progressionSummary(village))}</p>` : ''}
+      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div><div><dt>Temperatura</dt><dd>${Math.round(world.temperatureAt(Math.floor(c.x), Math.floor(c.y)))}°C</dd></div><div><dt>Hora</dt><dd>${DAY_PHASE_NAMES[world.dayPhase()]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']} · Reservas: ${Math.round(village.food)} comida, ${Math.round(village.wood)} madera, ${Math.round(village.stone)} piedra${belief ? ' · Creencia: ' + belief[0].replace('_', ' ') : ''}</p>${relations ? `<p class="progress-note"><strong>Relaciones</strong>${escapeHTML(relations)}</p>` : ''}<p class="progress-note"><strong>Progreso</strong>${escapeHTML(progressionSummary(village))}</p>` : ''}
     `
   } else {
     const biome = world.get(selection.x, selection.y), food = Math.round(world.vegetationAt(selection.x, selection.y))
