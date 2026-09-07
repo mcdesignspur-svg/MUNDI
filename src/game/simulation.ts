@@ -1,4 +1,5 @@
-import { COMFORT, FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Activity, type AnimalIntent, type AnimalReason, type Creature, type DeathCause } from './types'
+import { COMFORT, FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Activity, type AnimalIntent, type AnimalReason, type Creature, type DeathCause, type Village } from './types'
+import { berryYield, fishYield, hasKnowledge, huntDamage, huntFoodYield, lumberYield, stoneYield, workSpeed } from './progression'
 import { MAX_FIRES, type World } from './world'
 
 export const STEP = 1 / 20
@@ -80,9 +81,11 @@ function thermalStress(world: World, c: Creature): DeathCause | null {
   const temp = world.temperatureAt(Math.floor(c.x), Math.floor(c.y))
   const band = COMFORT[c.kind]
   const biome = world.get(Math.floor(c.x), Math.floor(c.y))
-  const shelter = biome === 'forest' || biome === 'snow' || !!c.villageId
+  const village = c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
+  const firecraft = village ? hasKnowledge(village, 'firecraft') : false
+  const shelter = biome === 'forest' || biome === 'snow' || !!c.villageId || firecraft
   // Only lethal far outside the comfort band; mild chill just raises metabolism elsewhere.
-  if (temp < band.min - 8 - (shelter ? 4 : 0)) {
+  if (temp < band.min - 8 - (shelter ? 4 : 0) - (firecraft ? 3 : 0)) {
     damage(c, Math.max(0.25, (band.min - 8 - temp) * 0.12) * STEP)
     return 'frio'
   }
@@ -91,6 +94,76 @@ function thermalStress(world: World, c: Creature): DeathCause | null {
     return 'calor'
   }
   return null
+}
+
+function villagerTarget(world: World, c: Creature, village: Village): { x: number; y: number } {
+  const construction = world.buildings.find(b => b.villageId === village.id && b.progress < 1)
+  if (c.task === 'building' && construction) return construction
+  if (c.task === 'foraging') return world.nearestBerry(c.x, c.y, 20) ?? world.nearestFood(c.x, c.y, 18) ?? village
+  if (c.task === 'fishing') return world.nearestShore(c.x, c.y, 24) ?? village
+  if (c.task === 'lumber') return world.nearestBiome(c.x, c.y, 'forest', 26) ?? village
+  if (c.task === 'mining') return world.nearestBiome(c.x, c.y, 'mountain', 28) ?? village
+  if (c.task === 'hunting') {
+    const prey = closest(c, world.spatial.nearby(c.x, c.y, 14).filter(o => o.kind === 'rabbit' && o.life > 0))
+    if (prey) return { x: prey.x - 0.5, y: prey.y - 0.5 }
+    return world.nearestBerry(c.x, c.y, 16) ?? village
+  }
+  return village
+}
+
+function harvestAtSite(world: World, c: Creature, village: Village, dt: number): boolean {
+  const tx = Math.floor(c.x), ty = Math.floor(c.y)
+  const hasSawmill = world.buildings.some(b => b.villageId === village.id && b.type === 'sawmill' && b.progress >= 1)
+  c.workTimer = (c.workTimer ?? 0) + dt
+  if (c.task === 'foraging') {
+    const got = world.pickBerries(tx, ty, 9 * dt)
+    if (got > 0) {
+      village.food += got * berryYield(village)
+      village.progress.berries += got
+      c.energy = Math.min(100, c.energy + got * 2)
+      c.activity = 'working'
+      return true
+    }
+  }
+  if (c.task === 'lumber') {
+    const got = world.chopTree(tx, ty, 10 * dt * workSpeed(village, 'lumber'))
+    if (got > 0) {
+      village.wood += got * lumberYield(village, hasSawmill)
+      village.progress.trees += got
+      c.activity = 'working'
+      return true
+    }
+  }
+  if (c.task === 'mining') {
+    const got = world.mineStone(tx, ty, 8 * dt * workSpeed(village, 'mining'))
+    if (got > 0) {
+      village.stone += got * stoneYield(village)
+      village.progress.stone += got
+      c.activity = 'working'
+      return true
+    }
+  }
+  if (c.task === 'fishing') {
+    const waterNear = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]].some(([dx, dy]) => {
+      const x = tx + dx, y = ty + dy
+      return world.inBounds(x, y) && (world.get(x, y) === 'water' || world.get(x, y) === 'deepWater')
+    })
+    if (waterNear && c.workTimer > 0.2) {
+      const catchAmount = fishYield(village) * dt * 3.2
+      village.food += catchAmount
+      village.progress.fish += catchAmount
+      c.energy = Math.min(100, c.energy + catchAmount * 1.5)
+      c.activity = 'working'
+      c.vx = c.vy = 0
+      return true
+    }
+  }
+  if (c.task === 'building') {
+    c.activity = 'working'
+    c.vx = c.vy = 0
+    return true
+  }
+  return false
 }
 
 function rabbitHabitatPoor(world: World, c: Creature): boolean {
@@ -216,9 +289,9 @@ function decideHuman(world: World, c: Creature): void {
     c.activity = 'hunting'
     if (prey) steer(c, prey.x - c.x, prey.y - c.y)
     else {
-      const food = world.nearestFood(c.x, c.y, 7)
+      const berries = world.nearestBerry(c.x, c.y, 9) ?? world.nearestFood(c.x, c.y, 7)
       c.activity = 'seeking-food'
-      if (food) steer(c, food.x + 0.5 - c.x, food.y + 0.5 - c.y)
+      if (berries) steer(c, berries.x + 0.5 - c.x, berries.y + 0.5 - c.y)
     }
   } else {
     const wolf = closest(c, nearby.filter(o => o.kind === 'wolf' && distance2(c, o) < 2.6))
@@ -294,17 +367,28 @@ export function simulate(world: World, dt = STEP): void {
     }
 
     const village = c.kind === 'human' && c.villageId ? world.villages.find(v => v.id === c.villageId) : undefined
+    let harvesting = false
     if (village) {
       c.activity = 'working'
-      const construction = world.buildings.find(b => b.villageId === village.id && b.progress < 1)
-      const target = (c.task === 'gathering' ? world.nearestFood(c.x, c.y, 18)
-        : c.task === 'fishing' ? (world.nearestBiome(c.x, c.y, 'water', 22) ?? world.nearestBiome(c.x, c.y, 'deepWater', 22))
-          : c.task === 'lumber' ? world.nearestBiome(c.x, c.y, 'forest', 22)
-            : c.task === 'mining' ? world.nearestBiome(c.x, c.y, 'mountain', 26)
-              : c.task === 'building' && construction ? construction : village) ?? village
-      const dx = target.x + 0.5 - c.x, dy = target.y + 0.5 - c.y
-      if (dx * dx + dy * dy < 0.12) c.vx = c.vy = 0
-      else steer(c, dx, dy)
+      const target = villagerTarget(world, c, village)
+      c.goalX = target.x + 0.5
+      c.goalY = target.y + 0.5
+      const dx = c.goalX - c.x, dy = c.goalY - c.y
+      const arrived = dx * dx + dy * dy < (c.task === 'hunting' ? 0.85 : 0.35)
+      if (arrived) {
+        c.vx = c.vy = 0
+        harvesting = harvestAtSite(world, c, village, dt)
+        if (!harvesting && c.task === 'hunting') {
+          // Stay ready to strike; combat block below handles the kill.
+          c.activity = 'hunting'
+        } else if (!harvesting) {
+          c.workTimer = 0
+          c.decisionIn = 0
+        }
+      } else {
+        c.workTimer = 0
+        steer(c, dx, dy)
+      }
     }
 
     if (c.kind !== 'wolf' && !['fleeing', 'hunting', 'defending', 'working'].includes(c.activity) && c.energy < 96) {
@@ -312,10 +396,11 @@ export function simulate(world: World, dt = STEP): void {
       c.energy = Math.min(100, c.energy + eaten * 1.25)
       if (eaten > 0) { c.activity = 'eating'; c.vx = c.vy = 0; c.decisionIn = Math.min(c.decisionIn, 0.3) }
     }
+    const villageForHunt = village
     const targets = world.spatial.nearby(c.x, c.y, 0.9).filter(o => o.life > 0 && (
       (c.kind === 'wolf' && c.energy < FOOD_THRESHOLD.wolf && (c.intent === 'stalking' || c.intent === 'hunting') && ((o.kind === 'rabbit' && wolfCanHuntRabbit(world, c, o)) || (o.kind === 'human' && wolfCanHuntHuman(world, c, o)))) ||
       (c.kind === 'human' && o.kind === 'wolf') ||
-      (c.kind === 'human' && c.energy < 86 && o.kind === 'rabbit')
+      (c.kind === 'human' && o.kind === 'rabbit' && (c.energy < 86 || c.task === 'hunting'))
     ))
     const target = closest(c, targets)
     let engaged = false
@@ -324,12 +409,23 @@ export function simulate(world: World, dt = STEP): void {
       const defending = c.kind === 'human' && target.kind === 'wolf'
       c.activity = defending ? 'defending' : 'hunting'
       c.vx = c.vy = 0
-      const fatal = damage(target, c.kind === 'wolf' ? (target.kind === 'human' ? 7 : 10) : (target.kind === 'wolf' ? 8 : 6))
+      const humanStrike = c.kind === 'human' ? huntDamage(villageForHunt) : (target.kind === 'wolf' ? 8 : 6)
+      const fatal = damage(target, c.kind === 'wolf' ? (target.kind === 'human' ? 7 : 10) : humanStrike)
       c.attackCooldown = c.kind === 'wolf' ? 0.72 : 0.82
-      if (fatal) { world.recordEvent('hunt', target.x, target.y, target.kind); world.recordDeath(target, 'ataque'); c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24)); c.activity = 'eating'; c.decisionIn = Math.min(c.decisionIn, 0.35) }
+      if (fatal) {
+        world.recordEvent('hunt', target.x, target.y, target.kind)
+        world.recordDeath(target, 'ataque')
+        c.energy = Math.min(100, c.energy + (c.kind === 'wolf' ? 32 : 24))
+        c.activity = 'eating'
+        c.decisionIn = Math.min(c.decisionIn, 0.35)
+        if (c.kind === 'human' && villageForHunt && target.kind === 'rabbit') {
+          villageForHunt.food += huntFoodYield(villageForHunt)
+          villageForHunt.progress.hunts++
+        }
+      }
     }
 
-    if (!engaged && c.activity !== 'eating' && c.activity !== 'resting') {
+    if (!engaged && !harvesting && c.activity !== 'eating' && c.activity !== 'resting') {
       const nightSlow = world.dayPhase() === 'night' && c.kind === 'rabbit' ? 0.72 : world.dayPhase() === 'night' && c.kind === 'wolf' ? 1.18 : 1
       const speed = SPEED[c.kind] * dt * nightSlow * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : 1)
       const nx = c.x + c.vx * speed, ny = c.y + c.vy * speed
@@ -338,6 +434,8 @@ export function simulate(world: World, dt = STEP): void {
       const nxTile = Math.floor(nx), nyTile = Math.floor(ny)
       if (world.inBounds(nxTile, nyTile) && ((WALKABLE.has(world.get(nxTile, nyTile)) && world.surfaceWaterAt(nxTile, nyTile) < 70) || stranded)) { c.x = nx; c.y = ny }
       else c.decisionIn = 0
+    } else if (harvesting) {
+      c.vx = c.vy = 0
     }
 
     if (c.kind === 'rabbit' && world.population.rabbit + births.length < RABBIT_LIMIT && c.age > 14 && c.energy > 88 && c.breedCooldown === 0 && rabbitCanBreed(world, c) && world.creatures.length + births.length < MAX_AGENTS) {
@@ -378,7 +476,7 @@ export function simulate(world: World, dt = STEP): void {
     const child = world.spawn('human', birth.x, birth.y)
     if (child) {
       child.villageId = birth.villageId
-      child.task = 'gathering'
+      child.task = 'foraging'
       child.activity = 'working'
       child.age = 0
       child.breedCooldown = 55

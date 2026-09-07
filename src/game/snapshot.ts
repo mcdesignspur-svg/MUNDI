@@ -1,4 +1,4 @@
-import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, type AnimalIntent, type AnimalReason, type Building, type Creature, type DeathRecord, type HumanTask, type PopulationSample, type Village, type Weather, type WorldEvent } from './types'
+import { ACTIVITY_NAMES, BIOME_COLORS, MAX_AGENTS, MAX_HEALTH, emptyProgress, type AnimalIntent, type AnimalReason, type Building, type Creature, type DeathRecord, type HumanTask, type KnowledgeId, type PopulationSample, type TechId, type Village, type Weather, type WorldEvent } from './types'
 import { World, WORLD_H, WORLD_W } from './world'
 
 export interface Snapshot {
@@ -38,7 +38,16 @@ export function snapshot(world: World): Snapshot {
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
     elevation: Array.from(world.elevation), surfaceWater: Array.from(world.surfaceWater),
     weather: world.weather, weatherUntil: world.weatherUntil, windAngle: world.windAngle, windStrength: world.windStrength,
-    creatures: world.creatures.map(c => ({ ...c })), villages: world.villages.map(v => ({ ...v, members: [...v.members], buildingQueue: [...v.buildingQueue] })), buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), events: world.events.map(e => ({ ...e })), populationHistory: world.populationHistory.map(p => ({ ...p })), fires: world.fires.map(f => ({ ...f })),
+    creatures: world.creatures.map(c => ({ ...c })),
+    villages: world.villages.map(v => ({
+      ...v,
+      members: [...v.members],
+      buildingQueue: [...v.buildingQueue],
+      knowledge: [...v.knowledge],
+      tech: [...v.tech],
+      progress: { ...v.progress },
+    })),
+    buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), events: world.events.map(e => ({ ...e })), populationHistory: world.populationHistory.map(p => ({ ...p })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
   }
 }
@@ -81,6 +90,8 @@ export function restore(input: unknown): World {
     ids.add(id)
     const intent = c.intent === undefined ? 'none' : choice(c.intent, ['none', 'foraging', 'sheltering', 'migrating', 'fleeing', 'resting', 'stalking', 'hunting'] as AnimalIntent[])
     const intentReason = c.intentReason === undefined ? 'none' : choice(c.intentReason, ['none', 'danger', 'fire', 'water', 'food', 'habitat', 'prey', 'rest'] as AnimalReason[])
+    const rawTask = c.task === undefined ? 'idle' : c.task
+    const task: HumanTask = rawTask === 'gathering' ? 'foraging' : choice(rawTask, ['foraging', 'hunting', 'lumber', 'mining', 'building', 'fishing', 'idle'] as HumanTask[])
     return {
       id, kind, x: number(c.x, 0, WORLD_W - 0.000001), y: number(c.y, 0, WORLD_H - 0.000001),
       vx: number(c.vx, -1, 1), vy: number(c.vy, -1, 1), life: number(c.life, 0, MAX_HEALTH[kind]),
@@ -93,14 +104,38 @@ export function restore(input: unknown): World {
       goalUntil: optionalNumber(c.goalUntil, 0, 1e12, 0),
       waterEscapeUntil: optionalNumber(c.waterEscapeUntil, 0, 1e12, 0),
       villageId: c.villageId === undefined ? undefined : number(c.villageId, 1, 1000, true),
-      task: c.task === undefined ? 'idle' : choice(c.task, ['gathering', 'lumber', 'mining', 'building', 'fishing', 'idle'] as HumanTask[]),
+      task,
+      workTimer: optionalNumber(c.workTimer, 0, 1e6, 0),
       activity: choice(c.activity, Object.keys(ACTIVITY_NAMES) as Creature['activity'][]),
     }
   })
   const firePositions = new Set<number>()
+  const knowledgeOptions = ['foraging', 'hunting', 'fishing', 'woodcraft', 'stonecraft', 'farming', 'firecraft'] as const
+  const techOptions = ['wood_tools', 'stone_tools', 'farm', 'sawmill', 'storehouse'] as const
   const villages = data.villages === undefined ? [] : list(data.villages, 30).map(raw => {
     const v = object(raw)
-    return { id: number(v.id, 1, 1000, true), name: typeof v.name === 'string' ? v.name.slice(0, 40) : 'Aldea', x: number(v.x, 0, WORLD_W - 1, true), y: number(v.y, 0, WORLD_H - 1, true), color: typeof v.color === 'string' ? v.color : '#e7bd66', food: number(v.food, 0, 1e6), wood: number(v.wood, 0, 1e6), stone: number(v.stone, 0, 1e6), members: list(v.members, MAX_AGENTS).map(id => number(id, 1, Number.MAX_SAFE_INTEGER, true)), buildingQueue: list(v.buildingQueue, 4).map(type => choice(type, ['home', 'storehouse', 'farm', 'sawmill'] as const)) }
+    const progressRaw = v.progress === undefined ? undefined : object(v.progress)
+    const progress = emptyProgress()
+    if (progressRaw) {
+      progress.berries = optionalNumber(progressRaw.berries, 0, 1e9, 0)
+      progress.hunts = optionalNumber(progressRaw.hunts, 0, 1e9, 0)
+      progress.fish = optionalNumber(progressRaw.fish, 0, 1e9, 0)
+      progress.trees = optionalNumber(progressRaw.trees, 0, 1e9, 0)
+      progress.stone = optionalNumber(progressRaw.stone, 0, 1e9, 0)
+      progress.nights = optionalNumber(progressRaw.nights, 0, 1e9, 0)
+      progress.farmTicks = optionalNumber(progressRaw.farmTicks, 0, 1e9, 0)
+    }
+    const knowledge = v.knowledge === undefined ? (['foraging'] as KnowledgeId[]) : list(v.knowledge, 12).map(id => choice(id, knowledgeOptions))
+    const tech = v.tech === undefined ? ([] as TechId[]) : list(v.tech, 12).map(id => choice(id, techOptions))
+    return {
+      id: number(v.id, 1, 1000, true), name: typeof v.name === 'string' ? v.name.slice(0, 40) : 'Aldea',
+      x: number(v.x, 0, WORLD_W - 1, true), y: number(v.y, 0, WORLD_H - 1, true),
+      color: typeof v.color === 'string' ? v.color : '#e7bd66',
+      food: number(v.food, 0, 1e6), wood: number(v.wood, 0, 1e6), stone: number(v.stone, 0, 1e6),
+      members: list(v.members, MAX_AGENTS).map(id => number(id, 1, Number.MAX_SAFE_INTEGER, true)),
+      buildingQueue: list(v.buildingQueue, 8).map(type => choice(type, ['home', 'storehouse', 'farm', 'sawmill'] as const)),
+      knowledge, tech, progress,
+    }
   })
   const buildings = data.buildings === undefined ? [] : list(data.buildings, 120).map(raw => {
     const b = object(raw)
@@ -120,10 +155,11 @@ export function restore(input: unknown): World {
     const e = object(raw)
     return {
       id: number(e.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
-      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze'] as const),
+      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze', 'discovery', 'research'] as const),
       x: number(e.x, 0, WORLD_W - 0.000001), y: number(e.y, 0, WORLD_H - 0.000001), tick: number(e.tick, 0, 1e12, true),
       creature: e.creature === undefined ? undefined : choice(e.creature, ['human', 'rabbit', 'wolf'] as const),
       cause: e.cause === undefined ? undefined : choice(e.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque', 'frio', 'calor'] as const),
+      label: e.label === undefined ? undefined : String(e.label).slice(0, 40),
       count: number(e.count, 1, 999, true),
     }
   })

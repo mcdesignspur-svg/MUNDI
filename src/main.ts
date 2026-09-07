@@ -3,7 +3,8 @@ import { Camera } from './game/camera'
 import { InputController } from './game/input'
 import { Renderer } from './game/renderer'
 import { simulate, STEP } from './game/simulation'
-import { ACTIVITY_NAMES, ANIMAL_REASON_NAMES, BUILDING_NAMES, DAY_PHASE_NAMES, DEATH_CAUSE_NAMES, MAX_AGE, MAX_HEALTH, OVERLAY_NAMES, SEASON_NAMES, TASK_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type Overlay, type ToolId } from './game/types'
+import { ACTIVITY_NAMES, ANIMAL_REASON_NAMES, BUILDING_NAMES, DAY_PHASE_NAMES, DEATH_CAUSE_NAMES, KNOWLEDGE_NAMES, MAX_AGE, MAX_HEALTH, OVERLAY_NAMES, SEASON_NAMES, TASK_NAMES, TECH_NAMES, WEATHER_NAMES, type Biome, type GameCommand, type KnowledgeId, type Overlay, type TechId, type ToolId } from './game/types'
+import { progressionSummary } from './game/progression'
 import { World, TILE } from './game/world'
 import { dispatch, type GameState } from './game/commands'
 import { snapshot, restore } from './game/snapshot'
@@ -208,6 +209,14 @@ function eventText(event: typeof world.events[number]): string {
   if (event.kind === 'fire') return 'Incendio iniciado' + amount
   if (event.kind === 'flood') return 'Inundación por escorrentía' + amount
   if (event.kind === 'freeze') return 'Helada sobre el paisaje' + amount
+  if (event.kind === 'discovery') {
+    const name = event.label && event.label in KNOWLEDGE_NAMES ? KNOWLEDGE_NAMES[event.label as KnowledgeId] : event.label ?? 'saber'
+    return 'Descubrimiento: ' + name + amount
+  }
+  if (event.kind === 'research') {
+    const name = event.label && event.label in TECH_NAMES ? TECH_NAMES[event.label as TechId] : event.label ?? 'tecnología'
+    return 'Tecnología: ' + name + amount
+  }
   return creature ? 'Un ' + creature + ' encontró tierra firme' + amount : 'Una criatura encontró tierra firme' + amount
 }
 function refreshEvents(): void {
@@ -252,7 +261,7 @@ function updateInspector(): void {
       <div class="inspector-identity"><span class="portrait row-${c.kind === 'human' ? 0 : c.kind === 'rabbit' ? 1 : 2}"></span><div><h2>${KIND_NAMES[c.kind]}</h2><span class="muted">Habitante #${c.id}</span></div></div>
       <p class="activity"><span class="live-dot"></span>${ACTIVITY_NAMES[c.activity]}${c.kind !== 'human' && c.intentReason && c.intentReason !== 'none' ? ' · ' + ANIMAL_REASON_NAMES[c.intentReason] : ''}</p>
       <div class="vitals"><label>Salud <strong>${health}%</strong><meter min="0" max="100" value="${health}">${health}%</meter></label><label>Hambre <strong>${hunger}% · ${hungerLabel}</strong><meter class="hunger" min="0" max="100" value="${hunger}">${hunger}%</meter></label></div>
-      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div><div><dt>Temperatura</dt><dd>${Math.round(world.temperatureAt(Math.floor(c.x), Math.floor(c.y)))}°C</dd></div><div><dt>Hora</dt><dd>${DAY_PHASE_NAMES[world.dayPhase()]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']} · Reservas: ${Math.round(village.food)} comida, ${Math.round(village.wood)} madera, ${Math.round(village.stone)} piedra</p>` : ''}
+      <dl><div><dt>Edad</dt><dd>${ageText(c.age, c.kind)}</dd></div><div><dt>Hábitat</dt><dd>${BIOME_NAMES[world.get(Math.floor(c.x), Math.floor(c.y))]}</dd></div><div><dt>Temperatura</dt><dd>${Math.round(world.temperatureAt(Math.floor(c.x), Math.floor(c.y)))}°C</dd></div><div><dt>Hora</dt><dd>${DAY_PHASE_NAMES[world.dayPhase()]}</dd></div></dl>${village ? `<p class="village-note"><strong>${village.name}</strong>${TASK_NAMES[c.task ?? 'idle']} · Reservas: ${Math.round(village.food)} comida, ${Math.round(village.wood)} madera, ${Math.round(village.stone)} piedra</p><p class="progress-note"><strong>Progreso</strong>${escapeHTML(progressionSummary(village))}</p>` : ''}
     `
   } else {
     const biome = world.get(selection.x, selection.y), food = Math.round(world.vegetationAt(selection.x, selection.y))
@@ -263,7 +272,7 @@ function updateInspector(): void {
     const flood = Math.round(world.surfaceWaterAt(selection.x, selection.y))
     const building = world.buildingAt(selection.x, selection.y)
     const village = building ? world.villages.find(v => v.id === building.villageId) : undefined
-    const villageText = building && village ? `<p class="village-note"><strong>${village.name} · ${BUILDING_NAMES[building.type]}</strong>${building.progress < 1 ? 'En construcción: ' + Math.round(building.progress * 100) + '%' : 'Población ' + village.members.length + ' · Comida ' + Math.round(village.food) + ' · Madera ' + Math.round(village.wood) + ' · Piedra ' + Math.round(village.stone)}</p>` : ''
+    const villageText = building && village ? `<p class="village-note"><strong>${village.name} · ${BUILDING_NAMES[building.type]}</strong>${building.progress < 1 ? 'En construcción: ' + Math.round(building.progress * 100) + '%' : 'Población ' + village.members.length + ' · Comida ' + Math.round(village.food) + ' · Madera ' + Math.round(village.wood) + ' · Piedra ' + Math.round(village.stone)}</p><p class="progress-note"><strong>Progreso</strong>${escapeHTML(progressionSummary(village))}</p>` : ''
     $('inspector-content').innerHTML = `
       <h2>${BIOME_NAMES[biome]}</h2><p class="muted">Celda ${selection.x + 1}, ${selection.y + 1} · ${DAY_PHASE_NAMES[world.dayPhase()]}</p>
       <dl><div><dt>Vegetación</dt><dd>${food}%</dd></div><div><dt>Humedad</dt><dd>${moisture}%</dd></div><div><dt>Fertilidad</dt><dd>${fertility}%</dd></div><div><dt>Temperatura</dt><dd>${temperature}°C</dd></div><div><dt>Elevación</dt><dd>${elevation}</dd></div><div><dt>Estado</dt><dd>${world.fires.some(f => f.x === selection.x && f.y === selection.y) ? 'En llamas' : flood > 40 ? 'Encharcado ' + flood + '%' : WEATHER_NAMES[world.weather]}</dd></div></dl>
