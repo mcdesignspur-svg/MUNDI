@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Building, type Creature, type CreatureKind, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
+import { FLAMMABLE, MAX_AGENTS, MAX_HEALTH, WALKABLE, type Biome, type Building, type Creature, type CreatureKind, type DayPhase, type DeathCause, type DeathRecord, type FireCell, type HumanTask, type MeteorFx, type PopulationSample, type Season, type Village, type Weather, type WorldEvent, type WorldEventKind } from './types'
 import { Random, seedNumber } from './random'
 import { SpatialIndex } from './spatial'
 
@@ -7,6 +7,8 @@ export const WORLD_H = 96
 export const TILE = 16
 export const CHUNK = 16
 export const MAX_FIRES = 180
+/** Minutes of world-time that make one full day/night cycle. */
+export const DAY_LENGTH = 24
 
 function hash(x: number, y: number, seed: number): number {
   let n = x * 374761393 + y * 668265263 + seed * 982451653
@@ -47,6 +49,12 @@ export class World {
   vegetation: Float32Array
   moisture: Float32Array
   fertility: Float32Array
+  /** Normalized height 0–100 used by runoff and biome succession. */
+  elevation: Float32Array
+  /** Local air temperature in °C-like units (−20…45). */
+  temperature: Float32Array
+  /** Transient surface water from storms and runoff (0–100). */
+  surfaceWater: Float32Array
   seed = ''
   random = new Random(1)
   spatial = new SpatialIndex()
@@ -65,6 +73,9 @@ export class World {
   tick = 0
   weather: Weather = 'clear'
   weatherUntil = 0
+  /** Wind direction in radians; fire and storms bias along this axis. */
+  windAngle = 0
+  windStrength = 0.35
   population = { human: 0, rabbit: 0, wolf: 0 }
 
   constructor(seed: string | number = 'MUNDI-ALBOR') {
@@ -72,6 +83,9 @@ export class World {
     this.vegetation = new Float32Array(this.width * this.height)
     this.moisture = new Float32Array(this.width * this.height)
     this.fertility = new Float32Array(this.width * this.height)
+    this.elevation = new Float32Array(this.width * this.height)
+    this.temperature = new Float32Array(this.width * this.height)
+    this.surfaceWater = new Float32Array(this.width * this.height)
     this.generate(seed)
   }
 
@@ -92,8 +106,10 @@ export class World {
     this.tiles[this.index(x, y)] = biome
     const index = this.index(x, y)
     this.vegetation[index] = biome === 'forest' ? 100 : biome === 'grass' ? 65 : 0
-    if (biome === 'water' || biome === 'deepWater') this.moisture[index] = 100
-    else if (biome === 'ash' || biome === 'lava') this.fertility[index] = Math.max(8, this.fertility[index]! * 0.42)
+    if (biome === 'water' || biome === 'deepWater') {
+      this.moisture[index] = 100
+      this.surfaceWater[index] = 0
+    } else if (biome === 'ash' || biome === 'lava') this.fertility[index] = Math.max(8, this.fertility[index]! * 0.42)
     else if (biome === 'grass' || biome === 'forest') {
       this.moisture[index] = Math.max(42, this.moisture[index]!)
       this.fertility[index] = Math.max(45, this.fertility[index]!)
@@ -117,31 +133,37 @@ export class World {
       for (let x = 0; x < this.width; x++) {
         const nx = x / this.width
         const ny = y / this.height
-        const elev = fbm(nx * 4.2, ny * 4.2, seed)
+        const elevNoise = fbm(nx * 4.2, ny * 4.2, seed)
         const moist = fbm(nx * 5.1 + 40, ny * 5.1 + 40, seed + 99)
         const dist =
           Math.hypot(nx - 0.5, ny - 0.5) * 1.35 +
           (fbm(nx * 3, ny * 3, seed + 7) - 0.5) * 0.15
 
+        // Island falloff + noise → absolute elevation used by hydrology later.
+        const elevation = Math.max(0, Math.min(100, (elevNoise * 78 + (1 - dist) * 42 - 8)))
         let biome: Biome
-        if (dist > 0.62 || elev < 0.32) {
-          biome = elev < 0.28 ? 'deepWater' : 'water'
-        } else if (elev < 0.38) {
+        if (dist > 0.62 || elevNoise < 0.32) {
+          biome = elevNoise < 0.28 ? 'deepWater' : 'water'
+        } else if (elevNoise < 0.38) {
           biome = 'sand'
-        } else if (elev > 0.72) {
+        } else if (elevNoise > 0.72) {
           biome = moist > 0.55 ? 'snow' : 'mountain'
-        } else if (moist > 0.58 && elev > 0.42) {
+        } else if (moist > 0.58 && elevNoise > 0.42) {
           biome = 'forest'
         } else {
           biome = 'grass'
         }
         const index = this.index(x, y)
         this.tiles[index] = biome
-        this.vegetation[index] = biome === 'forest' ? 100 : biome === 'grass' ? 55 + ((elev * 40) | 0) : 0
+        this.elevation[index] = biome === 'deepWater' ? Math.min(18, elevation * 0.35) : biome === 'water' ? Math.min(28, elevation * 0.55) : elevation
+        this.vegetation[index] = biome === 'forest' ? 100 : biome === 'grass' ? 55 + ((elevNoise * 40) | 0) : 0
         this.moisture[index] = biome === 'water' || biome === 'deepWater' ? 100 : Math.round(24 + moist * 70)
-        this.fertility[index] = biome === 'grass' || biome === 'forest' ? Math.round(35 + moist * 50 + elev * 10) : Math.round(12 + moist * 22)
+        this.fertility[index] = biome === 'grass' || biome === 'forest' ? Math.round(35 + moist * 50 + elevNoise * 10) : Math.round(12 + moist * 22)
+        this.surfaceWater[index] = 0
+        this.temperature[index] = 16
       }
     }
+    this.carveRivers(seed)
     this.creatures = []
     this.villages = []
     this.buildings = []
@@ -154,10 +176,47 @@ export class World {
     this.tick = 0
     this.weather = 'clear'
     this.weatherUntil = 0
+    this.windAngle = this.random.next() * Math.PI * 2
+    this.windStrength = 0.25 + this.random.next() * 0.35
     this.rainEffects = []
     this.revision++
     for (let i = 0; i < 36; i++) this.terrainVersions[i]++
+    this.refreshTemperature()
     this.recount()
+  }
+
+  /** Trace a few downhill streams so continents start with believable rivers. */
+  private carveRivers(seed: number): void {
+    const starts: { x: number; y: number; elev: number }[] = []
+    for (let y = 4; y < this.height - 4; y += 3) for (let x = 4; x < this.width - 4; x += 3) {
+      const elev = this.elevation[this.index(x, y)]!
+      const biome = this.get(x, y)
+      if (elev > 62 && biome !== 'water' && biome !== 'deepWater') starts.push({ x, y, elev })
+    }
+    starts.sort((a, b) => b.elev - a.elev)
+    const rivers = Math.min(7, Math.max(3, Math.floor(starts.length / 18)))
+    for (let r = 0; r < rivers; r++) {
+      let x = starts[r]!.x, y = starts[r]!.y
+      for (let step = 0; step < 90; step++) {
+        const biome = this.get(x, y)
+        if (biome === 'deepWater') break
+        if (biome !== 'water') {
+          this.tiles[this.index(x, y)] = 'water'
+          this.moisture[this.index(x, y)] = 100
+          this.vegetation[this.index(x, y)] = 0
+          this.surfaceWater[this.index(x, y)] = 0
+        }
+        let nextX = x, nextY = y, best = this.elevation[this.index(x, y)]!
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+          const nx = x + dx, ny = y + dy
+          if (!this.inBounds(nx, ny)) continue
+          const elev = this.elevation[this.index(nx, ny)]! + (hash(nx, ny, seed + r) - 0.5) * 4
+          if (elev < best) { best = elev; nextX = nx; nextY = ny }
+        }
+        if (nextX === x && nextY === y) break
+        x = nextX; y = nextY
+      }
+    }
   }
 
   populate(): void {
@@ -270,17 +329,32 @@ export class World {
         this.revision++
       }
     }
+    const season = this.season()
+    const farmBoost = season === 'spring' ? 1.35 : season === 'summer' ? 1.1 : season === 'autumn' ? 0.85 : 0.35
     for (const village of this.villages) {
       const members = this.creatures.filter(c => c.villageId === village.id && c.life > 0)
       village.members = members.map(c => c.id)
       if (!members.length) continue
       const active = this.buildings.find(b => b.villageId === village.id && b.progress < 1)
+      const farms = this.buildings.filter(b => b.villageId === village.id && b.type === 'farm' && b.progress >= 1)
+      const canFish = this.waterNear(village.x, village.y)
       for (const human of members) {
-        const task: HumanTask = active ? 'building' : village.food < 48 ? 'gathering' : village.wood < 24 ? 'lumber' : village.stone < 12 ? 'mining' : 'gathering'
+        const task: HumanTask = active ? 'building'
+          : village.food < 48 ? (canFish && village.food < 28 ? 'fishing' : 'gathering')
+            : village.wood < 24 ? 'lumber'
+              : village.stone < 12 ? 'mining'
+                : canFish && this.random.next() < 0.28 ? 'fishing' : 'gathering'
         human.task = task; human.activity = 'working'
       }
       const count = (task: HumanTask) => members.filter(c => c.task === task).length
-      village.food = Math.max(0, village.food - members.length * 0.22 + count('gathering') * 1.4)
+      let farmYield = 0
+      for (const farm of farms) {
+        const soil = this.fertilityAt(farm.x, farm.y) / 100
+        const wet = this.moistureAt(farm.x, farm.y) / 100
+        const warmth = Math.max(0, Math.min(1, (this.temperatureAt(farm.x, farm.y) - 2) / 28))
+        farmYield += soil * wet * warmth * farmBoost * 1.8
+      }
+      village.food = Math.max(0, village.food - members.length * 0.22 + count('gathering') * 1.4 + count('fishing') * 1.7 + farmYield)
       for (const human of members) if (human.energy < 86 && village.food >= 1) { human.energy = Math.min(100, human.energy + 12); village.food -= 1 }
       village.wood += count('lumber') * 0.8
       village.stone += count('mining') * 0.48
@@ -326,8 +400,69 @@ export class World {
     return this.inBounds(x, y) ? this.fertility[this.index(x, y)]! : 0
   }
 
+  elevationAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.elevation[this.index(x, y)]! : 0
+  }
+
+  temperatureAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.temperature[this.index(x, y)]! : 0
+  }
+
+  surfaceWaterAt(x: number, y: number): number {
+    return this.inBounds(x, y) ? this.surfaceWater[this.index(x, y)]! : 0
+  }
+
   season(): Season {
-    return (['spring', 'summer', 'autumn', 'winter'] as const)[Math.floor(this.tick / (20 * 360)) % 4]!
+    // ~12 world-hours per season keeps climate readable without wiping life at ×4.
+    return (['spring', 'summer', 'autumn', 'winter'] as const)[Math.floor(this.tick / (20 * 720)) % 4]!
+  }
+
+  /** 0…1 through the current day (midnight → midnight). */
+  dayProgress(): number {
+    const minutes = Math.floor(this.tick / 20)
+    return (minutes % DAY_LENGTH) / DAY_LENGTH
+  }
+
+  dayPhase(): DayPhase {
+    const t = this.dayProgress()
+    if (t < 0.22) return 'night'
+    if (t < 0.3) return 'dawn'
+    if (t < 0.72) return 'day'
+    if (t < 0.8) return 'dusk'
+    return 'night'
+  }
+
+  /** Solar warmth multiplier: night ~0.35, noon ~1.15. */
+  solarFactor(): number {
+    const t = this.dayProgress()
+    const sun = Math.sin(((t + 0.75) % 1) * Math.PI * 2)
+    return 0.55 + Math.max(0, sun) * 0.6
+  }
+
+  /** Recompute local temperatures from elevation, latitude, season, weather and sun. */
+  refreshTemperature(): void {
+    const season = this.season()
+    const base = season === 'summer' ? 25 : season === 'winter' ? 9 : season === 'spring' ? 17 : 13
+    const weatherBias = this.weather === 'drought' ? 3.5 : this.weather === 'storm' ? -2.5 : this.weather === 'rain' ? -1.2 : 0
+    const solar = this.solarFactor()
+    for (let y = 0; y < this.height; y++) {
+      const latitude = 1 - y / (this.height - 1)
+      for (let x = 0; x < this.width; x++) {
+        const index = this.index(x, y)
+        const elev = this.elevation[index]!
+        const biome = this.tiles[index]!
+        // Lapse only above foothills so valleys stay temperate and peaks feel alpine.
+        const altitudeCooling = Math.max(0, elev - 48) * 0.22
+        let temp = base + weatherBias + (latitude - 0.45) * 6 + (solar - 0.75) * 7 - altitudeCooling
+        if (biome === 'snow') temp -= 5
+        if (biome === 'sand') temp += 3
+        if (biome === 'forest') temp -= 1
+        if (biome === 'lava') temp += 16
+        if (biome === 'water' || biome === 'deepWater') temp -= 1
+        if (this.surfaceWater[index]! > 20) temp -= 0.8
+        this.temperature[index] = Math.max(-12, Math.min(46, temp))
+      }
+    }
   }
 
   /** Advances a deterministic local climate once per world minute. */
@@ -335,23 +470,132 @@ export class World {
     if (this.tick >= this.weatherUntil) {
       const season = this.season()
       const roll = this.random.next()
-      this.weather = season === 'summer' && roll < 0.38 ? 'drought' : season === 'spring' && roll < 0.48 ? 'rain' : season === 'autumn' && roll < 0.26 ? 'rain' : 'clear'
-      const duration = this.weather === 'clear' ? 75 : this.weather === 'rain' ? 42 : 58
+      this.weather = season === 'summer' && roll < 0.32 ? 'drought'
+        : season === 'summer' && roll < 0.42 ? 'storm'
+          : season === 'spring' && roll < 0.18 ? 'storm'
+            : season === 'spring' && roll < 0.55 ? 'rain'
+              : season === 'autumn' && roll < 0.22 ? 'storm'
+                : season === 'autumn' && roll < 0.42 ? 'rain'
+                  : season === 'winter' && roll < 0.28 ? 'rain'
+                    : 'clear'
+      const duration = this.weather === 'clear' ? 75 : this.weather === 'storm' ? 28 : this.weather === 'rain' ? 42 : 58
       this.weatherUntil = this.tick + duration * 20
+      this.windAngle = (this.windAngle + (this.random.next() - 0.5) * 1.4 + Math.PI * 2) % (Math.PI * 2)
+      this.windStrength = this.weather === 'storm' ? 0.75 + this.random.next() * 0.25 : this.weather === 'rain' ? 0.45 + this.random.next() * 0.25 : 0.2 + this.random.next() * 0.3
     }
+    this.refreshTemperature()
     const season = this.season()
-    const evaporation = season === 'summer' ? 0.42 : season === 'winter' ? 0.12 : 0.25
-    const rainfall = this.weather === 'rain' ? 1.65 : 0
+    const evaporation = (season === 'summer' ? 0.42 : season === 'winter' ? 0.12 : 0.25) * this.solarFactor()
+    const rainfall = this.weather === 'storm' ? 2.8 : this.weather === 'rain' ? 1.65 : 0
     const drought = this.weather === 'drought' ? 0.72 : 0
     for (let i = 0; i < this.tiles.length; i++) {
       const biome = this.tiles[i]!
       if (biome === 'water' || biome === 'deepWater') { this.moisture[i] = 100; continue }
       this.moisture[i] = Math.max(0, Math.min(100, this.moisture[i]! + rainfall - evaporation - drought))
+      if (rainfall > 0) this.surfaceWater[i] = Math.min(100, this.surfaceWater[i]! + rainfall * (this.weather === 'storm' ? 2.2 : 1.1))
       if (biome === 'grass' || biome === 'forest') {
-        const recovery = this.weather === 'rain' ? 0.09 : this.weather === 'drought' ? -0.045 : 0.018
+        const recovery = this.weather === 'rain' || this.weather === 'storm' ? 0.09 : this.weather === 'drought' ? -0.045 : 0.018
         this.fertility[i] = Math.max(4, Math.min(100, this.fertility[i]! + recovery))
       } else if (biome === 'ash') this.fertility[i] = Math.min(72, this.fertility[i]! + (this.moisture[i]! > 45 ? 0.1 : 0))
     }
+    this.updateHydrology()
+    this.evolveBiomes()
+  }
+
+  /** Downhill runoff: excess surface water drains to lower neighbors and feeds rivers/floods. */
+  updateHydrology(): void {
+    const next = new Float32Array(this.surfaceWater)
+    let flooded = 0
+    for (let y = 1; y < this.height - 1; y++) {
+      for (let x = 1; x < this.width - 1; x++) {
+        const index = this.index(x, y)
+        const biome = this.tiles[index]!
+        if (biome === 'water' || biome === 'deepWater' || biome === 'lava') { next[index] = 0; continue }
+        const water = this.surfaceWater[index]!
+        if (water < 4) {
+          next[index] = Math.max(0, water - 0.35 * this.solarFactor())
+          continue
+        }
+        let lowest = index, lowestElev = this.elevation[index]!
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ni = this.index(x + dx, y + dy)
+          const elev = this.elevation[ni]! - (this.tiles[ni] === 'water' || this.tiles[ni] === 'deepWater' ? 12 : 0)
+          if (elev < lowestElev) { lowestElev = elev; lowest = ni }
+        }
+        const flow = Math.min(water * 0.42, Math.max(0, water - 8))
+        next[index] = Math.max(0, water - flow - 0.45 * this.solarFactor())
+        if (this.tiles[lowest] === 'water' || this.tiles[lowest] === 'deepWater') continue
+        next[lowest] = Math.min(100, next[lowest]! + flow)
+      }
+    }
+    this.surfaceWater = next
+    for (let i = 0; i < this.tiles.length; i++) {
+      if (this.surfaceWater[i]! > 72 && WALKABLE.has(this.tiles[i]!) && this.tiles[i] !== 'mountain' && this.tiles[i] !== 'snow') {
+        const x = i % this.width, y = Math.floor(i / this.width)
+        if (this.elevation[i]! < 38 && this.random.next() < 0.08) {
+          this.tiles[i] = 'water'
+          this.vegetation[i] = 0
+          this.moisture[i] = 100
+          this.surfaceWater[i] = 0
+          this.touch(x, y)
+          flooded++
+        } else this.moisture[i] = Math.min(100, this.moisture[i]! + 2)
+      }
+    }
+    if (flooded > 0) this.recordEvent('flood', this.width / 2, this.height / 2)
+  }
+
+  /** Temperature + moisture push biomes toward believable successors. */
+  evolveBiomes(): void {
+    let froze = 0
+    for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
+      const index = this.index(x, y)
+      const biome = this.tiles[index]!
+      if (biome === 'lava' || biome === 'deepWater') continue
+      const temp = this.temperature[index]!
+      const moist = this.moisture[index]!
+      const elev = this.elevation[index]!
+      if (biome === 'water') {
+        if (temp < -2 && this.random.next() < 0.04) {
+          this.tiles[index] = 'snow'
+          this.vegetation[index] = 0
+          this.touch(x, y)
+          froze++
+        }
+        continue
+      }
+      if (biome === 'snow' && temp > 8 && elev < 70 && this.random.next() < 0.03) {
+        this.tiles[index] = elev > 58 ? 'mountain' : moist > 55 ? 'grass' : 'sand'
+        this.vegetation[index] = this.tiles[index] === 'grass' ? 20 : 0
+        this.touch(x, y)
+        continue
+      }
+      if ((biome === 'grass' || biome === 'forest') && temp < -6 && elev > 62 && this.random.next() < 0.02) {
+        this.tiles[index] = 'snow'
+        this.vegetation[index] = 0
+        this.touch(x, y)
+        froze++
+        continue
+      }
+      if (biome === 'grass' && moist < 18 && temp > 28 && this.weather === 'drought' && this.random.next() < 0.02) {
+        this.tiles[index] = 'sand'
+        this.vegetation[index] = 0
+        this.touch(x, y)
+        continue
+      }
+      if (biome === 'forest' && moist < 22 && this.weather === 'drought' && this.random.next() < 0.015) {
+        this.tiles[index] = 'grass'
+        this.vegetation[index] = 35
+        this.touch(x, y)
+        continue
+      }
+      if (biome === 'grass' && moist > 68 && temp > 8 && temp < 28 && this.vegetation[index]! > 85 && this.random.next() < 0.008) {
+        this.tiles[index] = 'forest'
+        this.vegetation[index] = 100
+        this.touch(x, y)
+      }
+    }
+    if (froze > 4) this.recordEvent('freeze', this.width / 2, this.height / 2)
   }
 
   graze(x: number, y: number, amount: number): number {
@@ -419,7 +663,7 @@ export class World {
     const minY = Math.max(0, Math.floor(cy - radius)), maxY = Math.min(this.height - 1, Math.ceil(cy + radius))
     let best: { x: number; y: number } | null = null, bestDistance = Infinity
     for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
-      if (!WALKABLE.has(this.get(x, y))) continue
+      if (!WALKABLE.has(this.get(x, y)) || this.surfaceWater[this.index(x, y)]! > 55) continue
       const distance = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2
       if (distance < bestDistance) { bestDistance = distance; best = { x, y } }
     }
@@ -433,17 +677,18 @@ export class World {
     const vegetation = this.vegetationAt(x, y)
     const moisture = this.moistureAt(x, y)
     const fertility = this.fertilityAt(x, y)
+    const temp = this.temperatureAt(x, y)
+    const flood = this.surfaceWaterAt(x, y)
     const fireNear = this.fires.some(f => (f.x - x) ** 2 + (f.y - y) ** 2 < 25)
-    if (fireNear || biome === 'lava') return -Infinity
+    if (fireNear || biome === 'lava' || flood > 55) return -Infinity
+    const comfort = kind === 'rabbit' ? temp > 0 && temp < 30 ? 12 : -18 : temp > -8 && temp < 28 ? 8 : -10
     if (kind === 'rabbit') {
       const cover = biome === 'forest' ? 30 : biome === 'grass' ? 10 : 0
-      return vegetation * 0.75 + moisture * 0.22 + fertility * 0.16 + cover
+      return vegetation * 0.75 + moisture * 0.22 + fertility * 0.16 + cover + comfort - flood * 0.35
     }
     const prey = this.spatial.nearby(x + 0.5, y + 0.5, 7).filter(c => c.kind === 'rabbit' && c.life > 0).length
     const nearestVillage = this.nearestVillageDistance(x, y)
-    // Wolves can roam through wilderness, but the village radius is expensive
-    // unless hunger later overrides it in the simulation.
-    return prey * 28 + moisture * 0.08 + fertility * 0.04 - Math.max(0, 13 - nearestVillage) * 9
+    return prey * 28 + moisture * 0.08 + fertility * 0.04 + comfort - Math.max(0, 13 - nearestVillage) * 9
   }
 
   /** Select from a bounded ring of samples, not a full map scan. */
@@ -552,6 +797,7 @@ export class World {
         const index = this.index(x, y)
         this.moisture[index] = Math.min(100, this.moisture[index]! + 38)
         this.fertility[index] = Math.min(100, this.fertility[index]! + 4)
+        this.surfaceWater[index] = Math.min(100, this.surfaceWater[index]! + 28)
         const b = this.get(x, y)
         if (b === 'lava') this.set(x, y, 'ash')
         if (b === 'ash') this.set(x, y, 'grass')

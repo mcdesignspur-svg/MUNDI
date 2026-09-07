@@ -14,8 +14,12 @@ export interface Snapshot {
   vegetation: number[]
   moisture: number[]
   fertility: number[]
+  elevation?: number[]
+  surfaceWater?: number[]
   weather: Weather
   weatherUntil: number
+  windAngle?: number
+  windStrength?: number
   creatures: Creature[]
   villages: Village[]
   buildings: Building[]
@@ -32,7 +36,8 @@ export function snapshot(world: World): Snapshot {
     format: 'mundi', version: 1, seed: world.seed, width: world.width, height: world.height,
     tick: world.tick, randomState: world.random.state, nextId: world.nextId,
     tiles: [...world.tiles], vegetation: Array.from(world.vegetation), moisture: Array.from(world.moisture), fertility: Array.from(world.fertility),
-    weather: world.weather, weatherUntil: world.weatherUntil,
+    elevation: Array.from(world.elevation), surfaceWater: Array.from(world.surfaceWater),
+    weather: world.weather, weatherUntil: world.weatherUntil, windAngle: world.windAngle, windStrength: world.windStrength,
     creatures: world.creatures.map(c => ({ ...c })), villages: world.villages.map(v => ({ ...v, members: [...v.members], buildingQueue: [...v.buildingQueue] })), buildings: world.buildings.map(b => ({ ...b })), deaths: world.deaths.map(d => ({ ...d })), events: world.events.map(e => ({ ...e })), populationHistory: world.populationHistory.map(p => ({ ...p })), fires: world.fires.map(f => ({ ...f })),
     meteors: world.meteors.map(m => ({ ...m })), rainEffects: world.rainEffects.map(r => ({ ...r })),
   }
@@ -88,7 +93,7 @@ export function restore(input: unknown): World {
       goalUntil: optionalNumber(c.goalUntil, 0, 1e12, 0),
       waterEscapeUntil: optionalNumber(c.waterEscapeUntil, 0, 1e12, 0),
       villageId: c.villageId === undefined ? undefined : number(c.villageId, 1, 1000, true),
-      task: c.task === undefined ? 'idle' : choice(c.task, ['gathering', 'lumber', 'mining', 'building', 'idle'] as HumanTask[]),
+      task: c.task === undefined ? 'idle' : choice(c.task, ['gathering', 'lumber', 'mining', 'building', 'fishing', 'idle'] as HumanTask[]),
       activity: choice(c.activity, Object.keys(ACTIVITY_NAMES) as Creature['activity'][]),
     }
   })
@@ -107,7 +112,7 @@ export function restore(input: unknown): World {
       id: number(d.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
       kind: choice(d.kind, ['human', 'rabbit', 'wolf'] as const),
       x: number(d.x, 0, WORLD_W - 0.000001), y: number(d.y, 0, WORLD_H - 0.000001),
-      cause: choice(d.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque'] as const),
+      cause: choice(d.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque', 'frio', 'calor'] as const),
       tick: number(d.tick, 0, 1e12, true),
     }
   })
@@ -115,10 +120,10 @@ export function restore(input: unknown): World {
     const e = object(raw)
     return {
       id: number(e.id, 1, Number.MAX_SAFE_INTEGER - 1, true),
-      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue'] as const),
+      kind: choice(e.kind, ['birth', 'hunt', 'death', 'migration', 'fire', 'rescue', 'flood', 'freeze'] as const),
       x: number(e.x, 0, WORLD_W - 0.000001), y: number(e.y, 0, WORLD_H - 0.000001), tick: number(e.tick, 0, 1e12, true),
       creature: e.creature === undefined ? undefined : choice(e.creature, ['human', 'rabbit', 'wolf'] as const),
-      cause: e.cause === undefined ? undefined : choice(e.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque'] as const),
+      cause: e.cause === undefined ? undefined : choice(e.cause, ['hambruna', 'vejez', 'fuego', 'lava', 'ataque', 'frio', 'calor'] as const),
       count: number(e.count, 1, 999, true),
     }
   })
@@ -143,8 +148,12 @@ export function restore(input: unknown): World {
   world.vegetation = new Float32Array(vegetation)
   if (data.moisture !== undefined) world.moisture = new Float32Array(list(data.moisture, count, true).map(v => number(v, 0, 100)))
   if (data.fertility !== undefined) world.fertility = new Float32Array(list(data.fertility, count, true).map(v => number(v, 0, 100)))
-  if (data.weather !== undefined) world.weather = choice(data.weather, ['clear', 'rain', 'drought'] as const)
+  if (data.elevation !== undefined) world.elevation = new Float32Array(list(data.elevation, count, true).map(v => number(v, 0, 100)))
+  if (data.surfaceWater !== undefined) world.surfaceWater = new Float32Array(list(data.surfaceWater, count, true).map(v => number(v, 0, 100)))
+  if (data.weather !== undefined) world.weather = choice(data.weather, ['clear', 'rain', 'drought', 'storm'] as const)
   if (data.weatherUntil !== undefined) world.weatherUntil = number(data.weatherUntil, 0, 1e12, true)
+  if (data.windAngle !== undefined) world.windAngle = number(data.windAngle, -100, 100)
+  if (data.windStrength !== undefined) world.windStrength = number(data.windStrength, 0, 2)
   world.creatures = creatures
   world.villages = villages
   world.buildings = buildings
@@ -157,6 +166,7 @@ export function restore(input: unknown): World {
   world.tick = number(data.tick, 0, 1e12, true)
   world.random.state = number(data.randomState, 0, 0xffffffff, true)
   world.nextId = number(data.nextId, Math.max(0, ...ids, ...events.map(e => e.id)) + 1, Number.MAX_SAFE_INTEGER, true)
+  world.refreshTemperature()
   world.recount()
   world.spatial.rebuild(world.creatures)
   return world

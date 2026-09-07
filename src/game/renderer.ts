@@ -146,12 +146,21 @@ export class Renderer {
         const vegetation = world.vegetationAt(x, y) / 100
         const moisture = world.moistureAt(x, y) / 100
         const fertility = world.fertilityAt(x, y) / 100
+        const temp = (world.temperatureAt(x, y) + 18) / 66
+        const elev = world.elevationAt(x, y) / 100
         let color = ''
         if (state.overlay === 'food') color = vegetation > 0 ? `rgba(143, 202, 78, ${0.1 + vegetation * 0.56})` : 'rgba(119, 65, 40, 0.4)'
         if (state.overlay === 'moisture') color = `rgba(54, 155, 211, ${0.08 + moisture * 0.58})`
         if (state.overlay === 'fertility') color = `rgba(183, 104, 196, ${0.08 + fertility * 0.54})`
+        if (state.overlay === 'temperature') {
+          const cold = Math.max(0, 1 - temp * 1.4)
+          const hot = Math.max(0, temp - 0.45)
+          color = `rgba(${Math.round(40 + hot * 210)}, ${Math.round(90 + temp * 40)}, ${Math.round(200 - hot * 160 + cold * 40)}, ${0.18 + Math.abs(temp - 0.5) * 0.55})`
+        }
+        if (state.overlay === 'elevation') color = `rgba(${Math.round(40 + elev * 160)}, ${Math.round(70 + elev * 90)}, ${Math.round(55 + elev * 40)}, ${0.2 + elev * 0.55})`
         if (state.overlay === 'hazards') {
-          color = burning?.has(world.index(x, y)) || biome === 'lava' ? 'rgba(243, 76, 43, 0.76)' : biome === 'ash' ? 'rgba(116, 93, 75, 0.6)' : 'rgba(24, 62, 71, 0.26)'
+          const flood = world.surfaceWaterAt(x, y) > 40
+          color = burning?.has(world.index(x, y)) || biome === 'lava' ? 'rgba(243, 76, 43, 0.76)' : flood ? 'rgba(64, 140, 220, 0.55)' : biome === 'ash' ? 'rgba(116, 93, 75, 0.6)' : 'rgba(24, 62, 71, 0.26)'
         }
         ctx.fillStyle = color
         ctx.fillRect(x * TILE, y * TILE, TILE, TILE)
@@ -262,13 +271,21 @@ export class Renderer {
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - 2, py + 5); ctx.stroke()
       }
     }
-    if (world.weather === 'rain' && !this.reducedMotion) {
-      ctx.strokeStyle = '#c5e9ed99'; ctx.lineWidth = 1
-      for (let i = 0; i < 70; i++) {
+    // Transient flood sheen on land cells holding runoff.
+    for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+      const flood = world.surfaceWaterAt(x, y)
+      if (flood < 28 || world.get(x, y) === 'water' || world.get(x, y) === 'deepWater') continue
+      ctx.fillStyle = `rgba(70, 150, 200, ${0.12 + flood / 220})`
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE)
+    }
+    if ((world.weather === 'rain' || world.weather === 'storm') && !this.reducedMotion) {
+      const drops = world.weather === 'storm' ? 120 : 70
+      ctx.strokeStyle = world.weather === 'storm' ? '#9fd4eecc' : '#c5e9ed99'; ctx.lineWidth = 1
+      for (let i = 0; i < drops; i++) {
         const n = tileNoise(i, Math.floor(this.time * 7), seed)
         const px = (left + n * (right - left)) * TILE
-        const py = (top + ((i / 70 + this.time * 1.8) % 1) * (bottom - top)) * TILE
-        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - 3, py + 8); ctx.stroke()
+        const py = (top + ((i / drops + this.time * (world.weather === 'storm' ? 2.6 : 1.8)) % 1) * (bottom - top)) * TILE
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - 3 - world.windStrength * 4, py + 8); ctx.stroke()
       }
     } else if (world.weather === 'drought') {
       ctx.fillStyle = '#d29d4730'
@@ -284,5 +301,13 @@ export class Renderer {
       ctx.beginPath(); ctx.arc((hover.x + 0.5) * TILE, (hover.y + 0.5) * TILE, (state.brush + 0.5) * TILE, 0, Math.PI * 2); ctx.stroke()
     }
     ctx.restore()
+    // Day/night grade sits above the world so hours feel tangible without hiding detail.
+    const phase = world.dayPhase()
+    if (phase !== 'day') {
+      const alpha = phase === 'night' ? 0.38 : phase === 'dusk' ? 0.22 : 0.14
+      const tint = phase === 'night' ? '12, 28, 52' : phase === 'dusk' ? '48, 28, 18' : '40, 48, 70'
+      this.ctx.fillStyle = `rgba(${tint}, ${alpha})`
+      this.ctx.fillRect(0, 0, camera.viewW, camera.viewH)
+    }
   }
 }

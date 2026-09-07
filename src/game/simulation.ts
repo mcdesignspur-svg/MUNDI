@@ -1,4 +1,4 @@
-import { FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Activity, type AnimalIntent, type AnimalReason, type Creature, type DeathCause } from './types'
+import { COMFORT, FLAMMABLE, MAX_AGENTS, MAX_AGE, WALKABLE, type Activity, type AnimalIntent, type AnimalReason, type Creature, type DeathCause } from './types'
 import { MAX_FIRES, type World } from './world'
 
 export const STEP = 1 / 20
@@ -66,7 +66,31 @@ function nearestHazard(world: World, c: Creature, radius = 7): { x: number; y: n
   }
   const tx = Math.floor(c.x), ty = Math.floor(c.y)
   if (world.get(tx, ty) === 'lava') return { x: tx + 0.5, y: ty + 0.5 }
+  if (world.surfaceWaterAt(tx, ty) > 60) return { x: tx + 0.5, y: ty + 0.5 }
   return best
+}
+
+function damage(target: Creature, amount: number): boolean {
+  target.life = Math.max(0, target.life - amount)
+  target.hurt = Math.max(target.hurt, 0.42)
+  return target.life <= 0
+}
+
+function thermalStress(world: World, c: Creature): DeathCause | null {
+  const temp = world.temperatureAt(Math.floor(c.x), Math.floor(c.y))
+  const band = COMFORT[c.kind]
+  const biome = world.get(Math.floor(c.x), Math.floor(c.y))
+  const shelter = biome === 'forest' || biome === 'snow' || !!c.villageId
+  // Only lethal far outside the comfort band; mild chill just raises metabolism elsewhere.
+  if (temp < band.min - 8 - (shelter ? 4 : 0)) {
+    damage(c, Math.max(0.25, (band.min - 8 - temp) * 0.12) * STEP)
+    return 'frio'
+  }
+  if (temp > band.max + 8 + (shelter ? 3 : 0)) {
+    damage(c, Math.max(0.25, (temp - band.max - 8) * 0.1) * STEP)
+    return 'calor'
+  }
+  return null
 }
 
 function rabbitHabitatPoor(world: World, c: Creature): boolean {
@@ -75,7 +99,8 @@ function rabbitHabitatPoor(world: World, c: Creature): boolean {
 }
 
 function decideRabbit(world: World, c: Creature): void {
-  const nearby = world.spatial.nearby(c.x, c.y, 9)
+  const night = world.dayPhase() === 'night' || world.dayPhase() === 'dusk'
+  const nearby = world.spatial.nearby(c.x, c.y, night ? 11 : 9)
   const predator = closest(c, nearby.filter(o => o.life > 0 && (o.kind === 'wolf' || (o.kind === 'human' && !o.villageId && o.energy < 82))))
   const hazard = nearestHazard(world, c)
   if (hazard) {
@@ -89,6 +114,12 @@ function decideRabbit(world: World, c: Creature): void {
     } else {
       setAnimalGoal(c, 'fleeing', 'danger', c.x + (c.x - predator.x) * 4, c.y + (c.y - predator.y) * 4, world.tick + 20 * 4)
     }
+    return
+  }
+  if (night && world.random.next() < 0.35) {
+    const cover = world.nearestBiome(c.x, c.y, 'forest', 12) ?? world.nearestBiome(c.x, c.y, 'grass', 8)
+    if (cover) { setAnimalGoal(c, 'sheltering', 'rest', cover.x + 0.5, cover.y + 0.5, world.tick + 20 * 10); return }
+    setAnimalGoal(c, 'resting', 'rest', undefined, undefined, world.tick + 20 * 4)
     return
   }
   if (goalActive(world, c)) {
@@ -124,6 +155,7 @@ function wolfCanHuntRabbit(world: World, wolf: Creature, rabbit: Creature): bool
 }
 
 function decideWolf(world: World, c: Creature): void {
+  const night = world.dayPhase() === 'night' || world.dayPhase() === 'dusk'
   const hazard = nearestHazard(world, c)
   const villageDistance = world.nearestVillageDistance(c.x, c.y)
   if (hazard) {
@@ -134,10 +166,12 @@ function decideWolf(world: World, c: Creature): void {
     const village = world.villages.reduce((nearest, candidate) => !nearest || distanceTo(c, candidate.x + 0.5, candidate.y + 0.5) < distanceTo(c, nearest.x + 0.5, nearest.y + 0.5) ? candidate : nearest, undefined as typeof world.villages[number] | undefined)
     if (village) { beginMigration(world, c, 'danger', c.x + (c.x - village.x) * 3, c.y + (c.y - village.y) * 3, world.tick + 20 * 12); return }
   }
-  const nearby = world.spatial.nearby(c.x, c.y, 10)
+  const huntRadius = night ? 13 : 10
+  const nearby = world.spatial.nearby(c.x, c.y, huntRadius)
   const rabbits = nearby.filter(o => o.kind === 'rabbit' && o.life > 0 && wolfCanHuntRabbit(world, c, o))
   const prey = closest(c, rabbits.length ? rabbits : nearby.filter(o => o.kind === 'human' && o.life > 0 && wolfCanHuntHuman(world, c, o)))
-  if (c.energy < FOOD_THRESHOLD.wolf && prey) {
+  const hungry = c.energy < FOOD_THRESHOLD.wolf || (night && c.energy < 88)
+  if (hungry && prey) {
     const distance = Math.sqrt(distance2(c, prey))
     setAnimalGoal(c, distance > 2.2 ? 'stalking' : 'hunting', 'prey', prey.x, prey.y, world.tick + 20 * 6)
     return
@@ -145,6 +179,10 @@ function decideWolf(world: World, c: Creature): void {
   if (goalActive(world, c) && (c.intent === 'stalking' || c.intent === 'hunting')) {
     c.activity = activityFor(c.intent)
     steer(c, c.goalX! - c.x, c.goalY! - c.y)
+    return
+  }
+  if (!night && c.energy > 70 && world.random.next() < 0.22) {
+    setAnimalGoal(c, 'resting', 'rest', undefined, undefined, world.tick + 20 * (3 + world.random.next() * 4))
     return
   }
   const habitat = world.bestHabitat(c.x, c.y, 'wolf')
@@ -167,6 +205,12 @@ function decideHuman(world: World, c: Creature): void {
   steer(c, Math.cos(angle), Math.sin(angle))
   c.activity = 'exploring'
   const nearby = world.spatial.nearby(c.x, c.y, 7)
+  const phase = world.dayPhase()
+  if ((phase === 'night' || phase === 'dusk') && c.energy > 55 && world.random.next() < 0.4) {
+    const village = world.villages[0]
+    if (village) { c.activity = 'resting'; steer(c, village.x + 0.5 - c.x, village.y + 0.5 - c.y); return }
+    c.activity = 'resting'; c.vx = c.vy = 0; c.decisionIn = 0.8; return
+  }
   if (c.energy < FOOD_THRESHOLD.human) {
     const prey = closest(c, nearby.filter(o => o.kind === 'rabbit'))
     c.activity = 'hunting'
@@ -183,16 +227,20 @@ function decideHuman(world: World, c: Creature): void {
   }
 }
 
-function damage(target: Creature, amount: number): boolean {
-  target.life = Math.max(0, target.life - amount)
-  target.hurt = Math.max(target.hurt, 0.42)
-  return target.life <= 0
-}
-
 function rabbitCanBreed(world: World, c: Creature): boolean {
   const x = Math.floor(c.x), y = Math.floor(c.y)
   return world.vegetationAt(x, y) >= 42 && world.moistureAt(x, y) >= 38 && world.fertilityAt(x, y) >= 36
+    && world.temperatureAt(x, y) > 4 && world.temperatureAt(x, y) < 30
     && !world.spatial.nearby(c.x, c.y, 8).some(o => o.kind === 'wolf' && o.life > 0)
+}
+
+function windBiasedNeighbor(world: World): { x: number; y: number } {
+  const windX = Math.cos(world.windAngle), windY = Math.sin(world.windAngle)
+  if (world.random.next() < 0.55 + world.windStrength * 0.35) {
+    return { x: Math.round(windX) || (windX >= 0 ? 1 : -1), y: Math.round(windY) }
+  }
+  const a = Math.floor(world.random.next() * 8) * Math.PI / 4
+  return { x: Math.round(Math.cos(a)), y: Math.round(Math.sin(a)) }
 }
 
 export function simulate(world: World, dt = STEP): void {
@@ -201,6 +249,8 @@ export function simulate(world: World, dt = STEP): void {
   world.spatial.rebuild(world.creatures)
   const burning = new Set(world.fires.map(f => world.index(f.x, f.y)))
   const births: { x: number; y: number }[] = []
+  const humanBirths: { x: number; y: number; villageId: number }[] = []
+  const wolfBirths: { x: number; y: number }[] = []
   for (const c of world.creatures) {
     if (c.life <= 0) continue
     let deathCause: DeathCause | null = null
@@ -209,8 +259,12 @@ export function simulate(world: World, dt = STEP): void {
     c.breedCooldown = Math.max(0, c.breedCooldown - dt)
     c.attackCooldown = Math.max(0, c.attackCooldown - dt)
     c.hurt = Math.max(0, c.hurt - dt)
-    c.energy -= METABOLISM[c.kind] * dt * (c.activity === 'resting' ? 0.5 : 1)
+    const cold = world.temperatureAt(Math.floor(c.x), Math.floor(c.y)) < COMFORT[c.kind].min
+    c.energy -= METABOLISM[c.kind] * dt * (c.activity === 'resting' ? 0.5 : 1) * (cold ? 1.25 : 1)
     if (c.energy <= 0) { damage(c, 4 * dt); deathCause = 'hambruna' }
+    const thermal = thermalStress(world, c)
+    if (thermal && c.life <= 0) deathCause = thermal
+    else if (thermal) deathCause = deathCause ?? thermal
     const tx = Math.floor(c.x), ty = Math.floor(c.y)
     if (burning.has(world.index(tx, ty))) { damage(c, 14 * dt); deathCause = 'fuego' }
     if (world.get(tx, ty) === 'lava') { damage(c, 35 * dt); deathCause = 'lava' }
@@ -220,7 +274,7 @@ export function simulate(world: World, dt = STEP): void {
     // Painting water, a meteor, or map generation can leave a creature on a
     // non-walkable tile. Give it a direct shoreline target so it never waits
     // indefinitely for a random direction that happens to work.
-    const stranded = !WALKABLE.has(world.get(tx, ty))
+    const stranded = !WALKABLE.has(world.get(tx, ty)) || world.surfaceWaterAt(tx, ty) > 70
     if (stranded) {
       const shore = world.nearestWalkable(c.x, c.y)
       if (shore) {
@@ -244,9 +298,10 @@ export function simulate(world: World, dt = STEP): void {
       c.activity = 'working'
       const construction = world.buildings.find(b => b.villageId === village.id && b.progress < 1)
       const target = (c.task === 'gathering' ? world.nearestFood(c.x, c.y, 18)
-        : c.task === 'lumber' ? world.nearestBiome(c.x, c.y, 'forest', 22)
-          : c.task === 'mining' ? world.nearestBiome(c.x, c.y, 'mountain', 26)
-            : c.task === 'building' && construction ? construction : village) ?? village
+        : c.task === 'fishing' ? (world.nearestBiome(c.x, c.y, 'water', 22) ?? world.nearestBiome(c.x, c.y, 'deepWater', 22))
+          : c.task === 'lumber' ? world.nearestBiome(c.x, c.y, 'forest', 22)
+            : c.task === 'mining' ? world.nearestBiome(c.x, c.y, 'mountain', 26)
+              : c.task === 'building' && construction ? construction : village) ?? village
       const dx = target.x + 0.5 - c.x, dy = target.y + 0.5 - c.y
       if (dx * dx + dy * dy < 0.12) c.vx = c.vy = 0
       else steer(c, dx, dy)
@@ -275,11 +330,13 @@ export function simulate(world: World, dt = STEP): void {
     }
 
     if (!engaged && c.activity !== 'eating' && c.activity !== 'resting') {
-      const speed = SPEED[c.kind] * dt * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : 1)
+      const nightSlow = world.dayPhase() === 'night' && c.kind === 'rabbit' ? 0.72 : world.dayPhase() === 'night' && c.kind === 'wolf' ? 1.18 : 1
+      const speed = SPEED[c.kind] * dt * nightSlow * (c.activity === 'fleeing' || c.activity === 'sheltering' ? 1.35 : c.activity === 'stalking' ? 0.72 : 1)
       const nx = c.x + c.vx * speed, ny = c.y + c.vy * speed
       // A stranded creature may cross a few water cells only while following
       // its emergency shore route; ordinary navigation still never enters water.
-      if (world.inBounds(Math.floor(nx), Math.floor(ny)) && (WALKABLE.has(world.get(Math.floor(nx), Math.floor(ny))) || stranded)) { c.x = nx; c.y = ny }
+      const nxTile = Math.floor(nx), nyTile = Math.floor(ny)
+      if (world.inBounds(nxTile, nyTile) && ((WALKABLE.has(world.get(nxTile, nyTile)) && world.surfaceWaterAt(nxTile, nyTile) < 70) || stranded)) { c.x = nx; c.y = ny }
       else c.decisionIn = 0
     }
 
@@ -291,28 +348,72 @@ export function simulate(world: World, dt = STEP): void {
         c.breedCooldown = mate.breedCooldown = 105 + world.random.next() * 45
       }
     }
+    if (c.kind === 'human' && c.villageId && c.age > 40 && c.age < MAX_AGE.human * 0.72 && c.energy > 70 && c.breedCooldown === 0 && world.creatures.length + humanBirths.length < MAX_AGENTS) {
+      const village = world.villages.find(v => v.id === c.villageId)
+      const villagers = village ? world.creatures.filter(o => o.villageId === village.id && o.life > 0) : []
+      const needsHeir = villagers.some(o => o.age > MAX_AGE.human * 0.62)
+      if (village && village.food > 40 && (villagers.length < 18 || (needsHeir && villagers.length < 22))) {
+        const mate = villagers.find(o => o.id !== c.id && o.age > 40 && o.age < MAX_AGE.human * 0.72 && o.breedCooldown === 0 && o.energy > 65)
+        if (mate && world.random.next() < (needsHeir ? 0.08 : 0.045)) {
+          humanBirths.push({ x: village.x, y: village.y, villageId: village.id })
+          c.energy -= 12; mate.energy -= 8; village.food -= 8
+          c.breedCooldown = mate.breedCooldown = needsHeir ? 90 + world.random.next() * 40 : 180 + world.random.next() * 60
+        }
+      }
+    }
+    if (c.kind === 'wolf' && world.population.wolf < 10 && c.age > 30 && c.energy > 78 && c.breedCooldown === 0 && world.creatures.length + wolfBirths.length < MAX_AGENTS) {
+      const mate = world.spatial.nearby(c.x, c.y, 6).find(o => o.kind === 'wolf' && o.id !== c.id && o.energy > 70 && o.breedCooldown === 0 && o.age > 30)
+      if (mate && world.random.next() < 0.05) {
+        wolfBirths.push({ x: tx, y: ty })
+        c.energy -= 18; mate.energy -= 12
+        c.breedCooldown = mate.breedCooldown = 220 + world.random.next() * 80
+      }
+    }
   }
   world.creatures = world.creatures.filter(c => c.life > 0)
   for (const birth of births) {
     if (world.spawn('rabbit', birth.x, birth.y)) world.recordEvent('birth', birth.x + 0.5, birth.y + 0.5, 'rabbit')
   }
+  for (const birth of humanBirths) {
+    const child = world.spawn('human', birth.x, birth.y)
+    if (child) {
+      child.villageId = birth.villageId
+      child.task = 'gathering'
+      child.activity = 'working'
+      child.age = 0
+      child.breedCooldown = 55
+      world.recordEvent('birth', child.x, child.y, 'human')
+    }
+  }
+  for (const birth of wolfBirths) {
+    if (world.spawn('wolf', birth.x, birth.y)) world.recordEvent('birth', birth.x + 0.5, birth.y + 0.5, 'wolf')
+  }
   if (world.tick % 20 === 0) {
     const next: typeof world.fires = []
+    const wet = world.weather === 'rain' || world.weather === 'storm'
     for (const fire of world.fires) {
       const biome = world.get(fire.x, fire.y)
       if (!FLAMMABLE.has(biome)) continue
+      if (wet && world.random.next() < (world.weather === 'storm' ? 0.35 : 0.18)) continue
+      if (world.surfaceWaterAt(fire.x, fire.y) > 35) continue
       const fuel = world.burnFuel(fire.x, fire.y, biome === 'forest' ? 7 : 16)
       fire.heat += 0.1
       if (fuel <= 4) { world.set(fire.x, fire.y, 'ash'); continue }
-      const spreadChance = biome === 'forest' ? 0.12 : 0.035
+      const dryBoost = world.weather === 'drought' ? 1.6 : world.moistureAt(fire.x, fire.y) < 30 ? 1.25 : 1
+      const spreadChance = (biome === 'forest' ? 0.12 : 0.035) * dryBoost * (0.7 + world.windStrength)
       if (world.fires.length + next.length < MAX_FIRES && fuel > 25 && world.random.next() < spreadChance) {
-        const a = Math.floor(world.random.next() * 8) * Math.PI / 4
-        const x = fire.x + Math.round(Math.cos(a)), y = fire.y + Math.round(Math.sin(a)), key = world.index(x, y)
+        const dir = windBiasedNeighbor(world)
+        const x = fire.x + dir.x, y = fire.y + dir.y, key = world.index(x, y)
         if (world.inBounds(x, y) && FLAMMABLE.has(world.get(x, y)) && world.vegetationAt(x, y) > 30 && !burning.has(key)) { burning.add(key); next.push({ x, y, heat: 0.2 }) }
       }
       next.push(fire)
     }
     world.fires = next
+    if (world.weather === 'storm' && world.random.next() < 0.08) {
+      const x = 4 + Math.floor(world.random.next() * (world.width - 8))
+      const y = 4 + Math.floor(world.random.next() * (world.height - 8))
+      if (FLAMMABLE.has(world.get(x, y)) && world.vegetationAt(x, y) > 40) world.ignite(x, y, 0)
+    }
   }
   if (world.tick % 20 === 0) { world.updateClimate(); world.regrowNature(); world.advanceVillages() }
   if (world.tick % 90 === 0) for (let i = 0; i < world.tiles.length; i++) if (world.tiles[i] === 'lava' && world.random.next() < 0.15) world.set(i % world.width, Math.floor(i / world.width), 'ash')

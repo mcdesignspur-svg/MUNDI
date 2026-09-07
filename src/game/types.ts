@@ -13,11 +13,12 @@ export type CreatureKind = 'human' | 'rabbit' | 'wolf'
 export type AnimalIntent = 'none' | 'foraging' | 'sheltering' | 'migrating' | 'fleeing' | 'resting' | 'stalking' | 'hunting'
 export type AnimalReason = 'none' | 'danger' | 'fire' | 'water' | 'food' | 'habitat' | 'prey' | 'rest'
 export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
-export type Weather = 'clear' | 'rain' | 'drought'
-export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'hazards'
-export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque'
-export type WorldEventKind = 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue'
-export type HumanTask = 'gathering' | 'lumber' | 'mining' | 'building' | 'idle'
+export type Weather = 'clear' | 'rain' | 'drought' | 'storm'
+export type DayPhase = 'dawn' | 'day' | 'dusk' | 'night'
+export type Overlay = 'none' | 'food' | 'moisture' | 'fertility' | 'temperature' | 'elevation' | 'hazards'
+export type DeathCause = 'hambruna' | 'vejez' | 'fuego' | 'lava' | 'ataque' | 'frio' | 'calor'
+export type WorldEventKind = 'birth' | 'hunt' | 'death' | 'migration' | 'fire' | 'rescue' | 'flood' | 'freeze'
+export type HumanTask = 'gathering' | 'lumber' | 'mining' | 'building' | 'fishing' | 'idle'
 export type BuildingType = 'home' | 'storehouse' | 'farm' | 'sawmill'
 
 export interface Building { id: number; villageId: number; type: BuildingType; x: number; y: number; progress: number }
@@ -102,13 +103,19 @@ export const MAX_HEALTH: Record<CreatureKind, number> = { human: 50, rabbit: 20,
 export const MAX_AGE: Record<CreatureKind, number> = { human: 1300, rabbit: 520, wolf: 1000 }
 export const DEATH_CAUSE_NAMES: Record<DeathCause, string> = {
   hambruna: 'Murió de hambre', vejez: 'Murió de vejez', fuego: 'Murió en un incendio', lava: 'Murió por la lava', ataque: 'Murió en un ataque',
+  frio: 'Murió de frío', calor: 'Murió de calor extremo',
 }
 export const WORLD_EVENT_NAMES: Record<WorldEventKind, string> = {
   birth: 'Nacimiento', hunt: 'Cacería', death: 'Pérdida', migration: 'Migración', fire: 'Incendio', rescue: 'Salida del agua',
+  flood: 'Inundación', freeze: 'Helada',
 }
 export const SEASON_NAMES: Record<Season, string> = { spring: 'Primavera', summer: 'Verano', autumn: 'Otoño', winter: 'Invierno' }
-export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía' }
-export const OVERLAY_NAMES: Record<Overlay, string> = { none: 'Normal', food: 'Alimento', moisture: 'Humedad', fertility: 'Fertilidad', hazards: 'Peligros' }
+export const WEATHER_NAMES: Record<Weather, string> = { clear: 'Tiempo estable', rain: 'Lluvia', drought: 'Sequía', storm: 'Tormenta' }
+export const DAY_PHASE_NAMES: Record<DayPhase, string> = { dawn: 'Amanecer', day: 'Día', dusk: 'Atardecer', night: 'Noche' }
+export const OVERLAY_NAMES: Record<Overlay, string> = {
+  none: 'Normal', food: 'Alimento', moisture: 'Humedad', fertility: 'Fertilidad',
+  temperature: 'Temperatura', elevation: 'Elevación', hazards: 'Peligros',
+}
 export const ACTIVITY_NAMES: Record<Activity, string> = {
   exploring: 'Explorando', 'seeking-food': 'Buscando alimento', eating: 'Comiendo',
   hunting: 'Cazando', stalking: 'Acechando', defending: 'Defendiéndose', fleeing: 'Huyendo del peligro', sheltering: 'Buscando refugio', migrating: 'Migrando', resting: 'Descansando', working: 'Trabajando',
@@ -116,8 +123,17 @@ export const ACTIVITY_NAMES: Record<Activity, string> = {
 export const ANIMAL_REASON_NAMES: Record<AnimalReason, string> = {
   none: '', danger: 'peligro cercano', fire: 'fuego o lava', water: 'busca tierra firme', food: 'busca alimento', habitat: 'hábitat agotado', prey: 'busca presas', rest: 'necesita descansar',
 }
-export const TASK_NAMES: Record<HumanTask, string> = { gathering: 'Recolectando alimento', lumber: 'Cortando madera', mining: 'Extrayendo piedra', building: 'Construyendo', idle: 'Sin tarea' }
+export const TASK_NAMES: Record<HumanTask, string> = {
+  gathering: 'Recolectando alimento', lumber: 'Cortando madera', mining: 'Extrayendo piedra',
+  building: 'Construyendo', fishing: 'Pescando', idle: 'Sin tarea',
+}
 export const BUILDING_NAMES: Record<BuildingType, string> = { home: 'Vivienda', storehouse: 'Almacén', farm: 'Granja', sawmill: 'Aserradero' }
+/** Comfort band in °C-like units used by metabolism and habitat scoring. */
+export const COMFORT: Record<CreatureKind, { min: number; max: number }> = {
+  human: { min: 4, max: 34 },
+  rabbit: { min: 2, max: 32 },
+  wolf: { min: -6, max: 30 },
+}
 
 export interface FireCell {
   x: number
